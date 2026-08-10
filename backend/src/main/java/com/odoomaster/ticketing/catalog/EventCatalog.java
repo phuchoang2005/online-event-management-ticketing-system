@@ -2,6 +2,8 @@ package com.odoomaster.ticketing.catalog;
 
 import com.odoomaster.ticketing.shared.AppException;
 
+import org.springframework.modulith.NamedInterface;
+
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -14,7 +16,12 @@ import java.util.Set;
  * instead of reaching into catalog's {@code Event} entity or its repository, so the event schema
  * stays private to the module. Returns the lightweight {@link EventSummary} projection rather than
  * the JPA entity.
+ *
+ * <p>Exposed as the {@code catalog::events} named interface; consumers declare
+ * {@code allowedDependencies = "catalog::events"}, which leaves the rest of catalog's base package
+ * ({@code EventService}, {@code AdminEventService}, the controllers and DTOs) unreachable.
  */
+@NamedInterface("events")
 public interface EventCatalog {
 
     /**
@@ -59,11 +66,13 @@ public interface EventCatalog {
     /**
      * Immutable projection of an event exposed across module boundaries.
      */
+    @NamedInterface("events")
     record EventSummary(Long id, String title, String location,
                         Instant startTime, Instant endTime, String status) {}
 
     /**
      * Reporting projection of an event: identity, status, and its category names.
      */
+    @NamedInterface("events")
     record EventStats(Long id, String title, String status, Set<String> categoryNames) {}
 }

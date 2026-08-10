@@ -1,6 +1,7 @@
 package com.odoomaster.ticketing.shared;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.modulith.NamedInterface;
 
 /**
  * Domain exception carrying a stable error {@code code} and the HTTP {@link HttpStatus} to return.
@@ -8,7 +9,10 @@ import org.springframework.http.HttpStatus;
  * <p>Thrown by the service layer for expected business errors; {@code GlobalExceptionHandler}
  * maps it to the standard {@code ApiErrorEnvelope} so the frontend receives a consistent
  * {@code { error: { code, message, … } }} body.
+ *
+ * <p>Part of the {@code shared::errors} named interface.
  */
+@NamedInterface("errors")
 public class AppException extends RuntimeException {
     private final String code;
     private final HttpStatus status;

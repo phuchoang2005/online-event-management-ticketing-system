@@ -54,11 +54,28 @@ npm run build        # production build
 
 ### Backend module structure (Spring Modulith)
 
-The backend under `com.odoomaster.ticketing` (note: package is `odoomaster`, not `dede`/`ticketing` despite some README text) is a **Spring Modulith modular monolith** — one deployable, sliced by business capability into 9 modules + a shared kernel, direct sub-packages of the base package: `shared`, `iam`, `catalog`, `ticketing`, `sales`, `notification`, `feedback`, `analytics`, `audit`. Each module **exposes only the API types in its base package**; entities, repositories and impls are hidden in a `…/internal` sub-package. Cross-module calls go through published APIs (`EventCatalog`, `SeatInventory`, `TicketIssuance`, `SalesReporting`, `TicketingReporting`, `UserDirectory`) or `shared` events — **never a foreign repository or `…/internal` type**.
+The backend under `com.odoomaster.ticketing` (note: package is `odoomaster`, not `dede`/`ticketing` despite some README text) is a **Spring Modulith modular monolith** — one deployable, sliced by business capability into 9 modules + a shared kernel, direct sub-packages of the base package: `shared`, `iam`, `catalog`, `ticketing`, `sales`, `notification`, `feedback`, `analytics`, `audit`. Entities, repositories and impls are hidden in a `…/internal` sub-package; of what remains, a module **exposes across boundaries only the types annotated `@NamedInterface`**. Cross-module calls go through those published facets or `shared` events — **never a foreign repository, `…/internal` type, controller, DTO or unpublished service**.
 
-The `shared` kernel is **flat** — all cross-cutting types live directly in the `shared` base package (Modulith 1.1 has no open modules), so any module depends on it as a plain `"shared"`.
+The published API surface (the complete list — nothing else is reachable across modules):
 
-Boundaries are declared in each module's `package-info.java` via `@ApplicationModule(allowedDependencies = …)` and **enforced at build time** by `ModularityTests` (`ApplicationModules.of(Application.class).verify()` — static analysis, no Spring context/DB, runs in plain `mvn test`). A boundary violation or dependency cycle fails the build. Within a module the classic lifecycle still holds: `controller → service (@Transactional) → …/internal repository (Spring Data JPA) → …/internal entity → MySQL`; DTOs (`*Dtos.java` record containers) cross the controller boundary, entities never leave the service layer. See `docs/adr/0011-spring-modulith.md`, `docs/architecture/modulith/` (generated C4 diagrams + canvas), and `SPRING_MODULITH_REFACTOR_PLAN.md`. **Any change that adds a cross-module reference must keep `verify()` green and, if boundaries change, update the module's `allowedDependencies` and regenerate the docs (`mvn test -Dtest=DocumentationTests`).**
+| Facet | Types |
+|---|---|
+| `shared::errors` | `AppException`, `ApiErrorEnvelope` (+ `ErrorBody`, `FieldDetail`) |
+| `shared::security` | `AuthPrincipal`, `CurrentUser` |
+| `shared::audit` | `Auditable` |
+| `shared::contracts` | `TicketsIssuedEvent`, `EventDeletedEvent` |
+| `iam::directory` | `UserDirectory` (+ `UserRef`) |
+| `catalog::events` | `EventCatalog` (+ `EventSummary`, `EventStats`) |
+| `catalog::inventory` | `SeatInventory` (+ `SeatDetail`) |
+| `ticketing::issuance` | `TicketIssuance` (+ `TicketOrder`, `TicketLine`) |
+| `ticketing::reporting` | `TicketingReporting` |
+| `sales::reporting` | `SalesReporting` (+ `DailyRevenue`) |
+
+`analytics`, `audit`, `feedback`, `notification` publish nothing. The `shared` kernel is **physically flat** — all cross-cutting types live directly in the `shared` base package (Modulith 1.1 has no open modules) — but it is sliced into the four facets above, so a module names the facets it uses rather than taking the whole kernel.
+
+Two rules when touching this: **annotate nested types individually** (Modulith treats `EventCatalog.EventSummary` as its own class; unannotated it falls back into the module's unnamed interface and consumers break), and **write facet references without spaces** — `"catalog::events"`, never `"catalog :: events"` (Modulith 1.1.12 looks the interface up with the untrimmed segment, then reports the trimmed name, so the spaced form fails with a misleading "No named interface named 'events' found!").
+
+Boundaries are declared in each module's `package-info.java` via `@ApplicationModule(allowedDependencies = "module::facet", …)` and **enforced at build time** by `ModularityTests` (`verify()` — static analysis, no Spring context/DB, runs in plain `mvn test`), whose second test pins the facet table above so a dropped annotation fails at its cause. A boundary violation or dependency cycle fails the build. Within a module the classic lifecycle still holds: `controller → service (@Transactional) → …/internal repository (Spring Data JPA) → …/internal entity → MySQL`; DTOs (`*Dtos.java` record containers) cross the controller boundary, entities never leave the service layer. See `docs/adr/0011-spring-modulith.md`, `docs/adr/0012-named-interfaces.md`, `docs/architecture/modulith/`, and `SPRING_MODULITH_REFACTOR_PLAN.md`. **Any change that adds a cross-module reference must keep `verify()` green and, if the API surface changes, update the type's `@NamedInterface`, the consumer's `allowedDependencies`, `ModularityTests` and the facet tables in the docs.**
 
 ### Request lifecycle & cross-cutting concerns
 

@@ -36,4 +36,5 @@ Short, dated records of architectural decisions for the Dề Dê ticketing platf
 | [0008](0008-mysql-8-as-primary-store.md) | MySQL 8 as primary data store | Accepted |
 | [0009](0009-offline-first-mobile-checkin.md) | Offline-first mobile check-in with local SQLite | Accepted |
 | [0010](0010-single-instance-sweeper.md) | Single-instance seat-lock sweeper via DB advisory lock | Accepted |
-| [0011](0011-spring-modulith.md) | Spring Modulith modules with enforced boundaries | Accepted |
+| [0011](0011-spring-modulith.md) | Spring Modulith modules with enforced boundaries | Accepted (API surface superseded by 0012) |
+| [0012](0012-named-interfaces.md) | Named interfaces as the published module API surface | Accepted |

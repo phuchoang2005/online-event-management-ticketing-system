@@ -2,6 +2,8 @@ package com.odoomaster.ticketing.catalog;
 
 import com.odoomaster.ticketing.shared.AppException;
 
+import org.springframework.modulith.NamedInterface;
+
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -13,7 +15,12 @@ import java.util.List;
  * API, so callers such as {@code sales}' {@code OrderService} drive inventory without touching the
  * {@code EventSeat} entity or its repository. Every mutating method runs in the caller's transaction
  * (so the ordering flow stays a single atomic unit) and evicts the affected event's caches on commit.
+ *
+ * <p>Exposed as the {@code catalog::inventory} named interface, kept separate from
+ * {@code catalog::events} so a module that only reads event metadata cannot reach the
+ * concurrency-critical seat state machine.
  */
+@NamedInterface("inventory")
 public interface SeatInventory {
 
     /**
@@ -73,6 +80,7 @@ public interface SeatInventory {
     /**
      * Immutable projection of an {@code EventSeat} exposed across module boundaries.
      */
+    @NamedInterface("inventory")
     record SeatDetail(Long id, Long ticketTypeId, String rowLabel, String seatNumber,
                       String section, BigDecimal price, String status) {}
 }

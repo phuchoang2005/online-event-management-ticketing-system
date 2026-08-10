@@ -112,13 +112,16 @@ ADR-0001 captures the reasoning. Short version: a single Spring Boot deployable 
 The backend is a **Spring Modulith** application: one deployable, sliced by **business
 capability** into 9 modules + a shared kernel (direct sub-packages of
 `com.odoomaster.ticketing`), with boundaries **enforced at build time**. See
-[ADR-0011](../adr/0011-spring-modulith.md) and the generated
-[module docs](modulith/) (C4 diagrams + per-module canvas).
+[ADR-0011](../adr/0011-spring-modulith.md), [ADR-0012](../adr/0012-named-interfaces.md)
+and the [module docs](modulith/) (C4 diagrams + per-module canvas + facet table).
 
-Each module exposes only the **API types in its base package**; entities, repositories
-and impls are hidden in a **`…​.internal`** sub-package. Cross-module calls go through
-published APIs (`EventCatalog`, `SeatInventory`, `TicketIssuance`, `SalesReporting`,
-`TicketingReporting`, `UserDirectory`) or `shared` events — never a foreign repository.
+Entities, repositories and impls are hidden in a **`…​.internal`** sub-package. Of what
+remains, a module exposes across boundaries only the types annotated
+**`@NamedInterface`**, and each consumer declares the exact facets it uses —
+`allowedDependencies = "catalog::events"`. So cross-module calls go through published
+APIs (`EventCatalog`, `SeatInventory`, `TicketIssuance`, `SalesReporting`,
+`TicketingReporting`, `UserDirectory`) or `shared` events — never a foreign repository,
+and never another module's controllers, DTOs or internal services.
 
 ```mermaid
 flowchart TD
@@ -144,13 +147,13 @@ flowchart TD
     sales -. "listens: EventDeletedEvent" .-> shared
 ```
 
-| Module | Owns | Publishes |
+| Module | Owns | Publishes (named interfaces) |
 |---|---|---|
-| `shared` | error envelope, `TraceIdFilter`, `AuthPrincipal`/`@CurrentUser`, `@Auditable`, event contracts | all types (flat kernel) |
-| `iam` | users, roles, JWT auth, `SecurityConfig` | `UserDirectory` |
-| `catalog` | events, categories, ticket types, seats/venues, seat-lock sweeper, caches | `EventCatalog`, `SeatInventory` |
-| `ticketing` | tickets, gate check-in | `TicketIssuance`, `TicketingReporting` |
-| `sales` | orders, payments, retry loop | `SalesReporting` |
+| `shared` | error envelope, `TraceIdFilter`, `AuthPrincipal`/`@CurrentUser`, `@Auditable`, event contracts | `::errors`, `::security`, `::audit`, `::contracts` |
+| `iam` | users, roles, JWT auth, `SecurityConfig` | `::directory` (`UserDirectory`) |
+| `catalog` | events, categories, ticket types, seats/venues, seat-lock sweeper, caches | `::events` (`EventCatalog`), `::inventory` (`SeatInventory`) |
+| `ticketing` | tickets, gate check-in | `::issuance` (`TicketIssuance`), `::reporting` (`TicketingReporting`) |
+| `sales` | orders, payments, retry loop | `::reporting` (`SalesReporting`) |
 | `notification` | in-app notifications | — |
 | `feedback` | ratings/reviews | — |
 | `analytics` | admin dashboards (composes reporting APIs) | — |

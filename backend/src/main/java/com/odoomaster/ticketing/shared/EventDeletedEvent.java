@@ -1,5 +1,7 @@
 package com.odoomaster.ticketing.shared;
 
+import org.springframework.modulith.NamedInterface;
+
 /**
  * Domain event published by the catalog when an event is deleted.
  *
@@ -11,7 +13,10 @@ package com.odoomaster.ticketing.shared;
  * <p>Introduced in Sprint 0 as a published contract; the emitting side and listeners are wired
  * up in Sprint 3.
  *
+ * <p>Part of the {@code shared::contracts} named interface.
+ *
  * @param eventId id of the deleted event whose dependent rows must be purged
  */
+@NamedInterface("contracts")
 public record EventDeletedEvent(Long eventId) {
 }

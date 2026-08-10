@@ -1,5 +1,7 @@
 package com.odoomaster.ticketing.sales;
 
+import org.springframework.modulith.NamedInterface;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -11,7 +13,12 @@ import java.util.List;
  * <p>{@code analytics} calls this instead of reaching into sales' {@code Order}/{@code Payment}
  * entities or their repositories, so the sales schema stays private to the module. All figures are
  * derived from paid orders and recorded payments.
+ *
+ * <p>The whole of {@code sales}' cross-module surface, exposed as {@code sales::reporting};
+ * {@code OrderService} and {@code PaymentRetryService} are deliberately not published — ordering is
+ * driven through sales' own controller only.
  */
+@NamedInterface("reporting")
 public interface SalesReporting {
 
     /** Total revenue over all {@code PAID} orders. */
@@ -36,5 +43,6 @@ public interface SalesReporting {
     long countPaymentsByStatus(String status);
 
     /** One day's paid-order revenue and order count. */
+    @NamedInterface("reporting")
     record DailyRevenue(LocalDate date, BigDecimal revenue, long orderCount) {}
 }
