@@ -21,8 +21,9 @@ public class PaymentRetry {
     @Column(name = "payment_id", nullable = false)
     private Long paymentId;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String status;
+    private PaymentRetryStatus status;
 
     @Column(name = "attempt_no", nullable = false)
     private Integer attemptNo;

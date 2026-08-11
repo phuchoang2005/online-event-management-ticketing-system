@@ -2,6 +2,7 @@ package com.odoomaster.ticketing.service;
 import com.odoomaster.ticketing.sales.PaymentRetryService;
 
 import com.odoomaster.ticketing.sales.internal.PaymentRetry;
+import com.odoomaster.ticketing.sales.internal.PaymentRetryStatus;
 import com.odoomaster.ticketing.sales.internal.PaymentRetryRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,7 +35,7 @@ class PaymentRetryServiceReliabilityTest {
             "2,SUCCEEDED,,3",
             "9,FAILED,RATE_LIMITED,10"
     })
-    void recordAttempt_givenExistingAttempts_incrementsAttemptNumber(long existing, String status, String errorCode, int expected) {
+    void recordAttempt_givenExistingAttempts_incrementsAttemptNumber(long existing, PaymentRetryStatus status, String errorCode, int expected) {
         PaymentRetryService service = new PaymentRetryService(retries);
         when(retries.countByPaymentId(7L)).thenReturn(existing);
         when(retries.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -53,12 +54,12 @@ class PaymentRetryServiceReliabilityTest {
         when(retries.countByPaymentId(7L)).thenReturn(4L);
         when(retries.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        service.recordAttempt(7L, "FAILED", "TIMEOUT");
+        service.recordAttempt(7L, PaymentRetryStatus.FAILED, "TIMEOUT");
 
         ArgumentCaptor<PaymentRetry> saved = ArgumentCaptor.forClass(PaymentRetry.class);
         verify(retries).save(saved.capture());
         assertThat(saved.getValue().getAttemptNo()).isEqualTo(5);
-        assertThat(saved.getValue().getStatus()).isEqualTo("FAILED");
+        assertThat(saved.getValue().getStatus()).isEqualTo(PaymentRetryStatus.FAILED);
     }
 
     @Test
@@ -78,7 +79,7 @@ class PaymentRetryServiceReliabilityTest {
         var futures = java.util.stream.IntStream.range(0, 12)
                 .mapToObj(i -> pool.submit(() -> {
                     start.await(2, TimeUnit.SECONDS);
-                    service.recordAttempt(7L, "FAILED", "E" + i);
+                    service.recordAttempt(7L, PaymentRetryStatus.FAILED, "E" + i);
                     return null;
                 }))
                 .toList();

@@ -3,6 +3,7 @@ import com.odoomaster.ticketing.catalog.internal.SeatLockSweeperJob;
 
 import com.odoomaster.ticketing.catalog.internal.CacheConfig;
 import com.odoomaster.ticketing.catalog.internal.EventSeat;
+import com.odoomaster.ticketing.catalog.internal.SeatStatus;
 import com.odoomaster.ticketing.catalog.internal.EventSeatRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,10 +49,10 @@ class SeatLockSweeperJobTest {
 
         job.releaseExpiredLocks();
 
-        assertThat(s1.getStatus()).isEqualTo("AVAILABLE");
+        assertThat(s1.getStatus()).isEqualTo(SeatStatus.AVAILABLE);
         assertThat(s1.getLockedBy()).isNull();
         assertThat(s1.getLockedUntil()).isNull();
-        assertThat(s2.getStatus()).isEqualTo("AVAILABLE");
+        assertThat(s2.getStatus()).isEqualTo(SeatStatus.AVAILABLE);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<EventSeat>> captor = ArgumentCaptor.forClass(List.class);
@@ -89,7 +90,7 @@ class SeatLockSweeperJobTest {
         EventSeat s = new EventSeat();
         s.setId(id);
         s.setEventId(eventId);
-        s.setStatus("LOCKED");
+        s.setStatus(SeatStatus.LOCKED);
         s.setLockedBy(99L);
         s.setLockedUntil(Instant.now().minusSeconds(60));
         s.setVersion(0);

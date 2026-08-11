@@ -50,8 +50,9 @@ public class Event {
     @Column(name = "end_time", nullable = false)
     private Instant endTime;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String status;
+    private EventStatus status;
 
     @Column(name = "created_by")
     private Long createdBy;
@@ -62,7 +63,7 @@ public class Event {
     @PrePersist
     void prePersist() {
         if (createdAt == null) createdAt = Instant.now();
-        if (status == null) status = "PUBLISHED";
+        if (status == null) status = EventStatus.PUBLISHED;
     }
 
     public Set<String> getCategoryNames() {

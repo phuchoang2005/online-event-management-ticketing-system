@@ -8,6 +8,8 @@ import com.odoomaster.ticketing.ticketing.TicketDtos.ScanRequest;
 import com.odoomaster.ticketing.ticketing.TicketDtos.ScanResult;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.ticketing.internal.CheckIn;
+import com.odoomaster.ticketing.ticketing.internal.CheckInStatus;
+import com.odoomaster.ticketing.ticketing.internal.TicketStatus;
 import com.odoomaster.ticketing.ticketing.internal.CheckInRepository;
 import com.odoomaster.ticketing.ticketing.internal.Ticket;
 import com.odoomaster.ticketing.ticketing.internal.TicketRepository;
@@ -49,17 +51,17 @@ public class CheckInService {
         Ticket t = tickets.findByQrCode(req.qrCode())
                 .orElseThrow(() -> new AppException("TICKET_NOT_FOUND", "Ticket not found.", HttpStatus.NOT_FOUND));
 
-        if ("USED".equals(t.getStatus()) || checkIns.existsByTicketId(t.getId())) {
+        if (t.getStatus() == TicketStatus.USED || checkIns.existsByTicketId(t.getId())) {
             throw new AppException("ALREADY_USED", "Ticket already checked in.", HttpStatus.CONFLICT);
         }
-        if (!"VALID".equals(t.getStatus())) {
+        if (t.getStatus() != TicketStatus.VALID) {
             throw new AppException("TICKET_NOT_VALID", "Ticket not in VALID state.", HttpStatus.CONFLICT);
         }
 
         CheckIn ci = CheckIn.builder()
                 .ticketId(t.getId())
                 .checkedInBy(scannerUserId)
-                .status("OK")
+                .status(CheckInStatus.OK)
                 .deviceId(req.deviceId())
                 .build();
         try {
@@ -68,7 +70,7 @@ public class CheckInService {
             throw new AppException("ALREADY_USED", "Ticket already checked in.", HttpStatus.CONFLICT);
         }
 
-        t.setStatus("USED");
+        t.setStatus(TicketStatus.USED);
         tickets.save(t);
 
         EventSummary ev = eventCatalog.find(t.getEventId()).orElse(null);

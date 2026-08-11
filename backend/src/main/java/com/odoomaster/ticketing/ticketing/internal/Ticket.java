@@ -37,8 +37,9 @@ public class Ticket {
     @Column(name = "qr_code", nullable = false, unique = true, length = 64)
     private String qrCode;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String status;
+    private TicketStatus status;
 
     @Column(name = "issued_at", nullable = false, updatable = false)
     private Instant issuedAt;
@@ -46,6 +47,6 @@ public class Ticket {
     @PrePersist
     void prePersist() {
         if (issuedAt == null) issuedAt = Instant.now();
-        if (status == null) status = "VALID";
+        if (status == null) status = TicketStatus.VALID;
     }
 }

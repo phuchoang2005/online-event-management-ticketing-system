@@ -2,6 +2,7 @@ package com.odoomaster.ticketing.iam;
 
 import com.odoomaster.ticketing.iam.internal.Role;
 import com.odoomaster.ticketing.iam.internal.User;
+import com.odoomaster.ticketing.iam.internal.UserStatus;
 import com.odoomaster.ticketing.iam.AuthDtos.*;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.iam.internal.RoleRepository;
@@ -52,7 +53,7 @@ public class AuthService {
                 .fullName(req.fullName())
                 .phone(req.phone())
                 .roles(roleSet)
-                .status("ACTIVE")
+                .status(UserStatus.ACTIVE)
                 .build();
         users.save(u);
         return issue(u);
@@ -68,7 +69,7 @@ public class AuthService {
             throw new AppException("INVALID_CREDENTIALS",
                     "Email hoặc mật khẩu không đúng.", HttpStatus.UNAUTHORIZED);
         }
-        if (!"ACTIVE".equals(u.getStatus())) {
+        if (u.getStatus() != UserStatus.ACTIVE) {
             throw new AppException("ACCOUNT_INACTIVE", "Account is not active.", HttpStatus.FORBIDDEN);
         }
         return issue(u);

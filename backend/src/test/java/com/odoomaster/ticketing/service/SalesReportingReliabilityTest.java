@@ -3,6 +3,8 @@ package com.odoomaster.ticketing.service;
 import com.odoomaster.ticketing.sales.SalesReporting;
 import com.odoomaster.ticketing.sales.SalesReporting.DailyRevenue;
 import com.odoomaster.ticketing.sales.internal.OrderRepository;
+import com.odoomaster.ticketing.sales.internal.OrderStatus;
+import com.odoomaster.ticketing.sales.payment.PaymentStatus;
 import com.odoomaster.ticketing.sales.internal.PaymentRepository;
 import com.odoomaster.ticketing.sales.internal.SalesReportingImpl;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,12 +62,12 @@ class SalesReportingReliabilityTest {
     void aggregates_delegateToRepositories() {
         when(orders.sumPaidRevenue()).thenReturn(new BigDecimal("800000"));
         when(orders.sumPaidRevenueForEvent(5L)).thenReturn(new BigDecimal("120000"));
-        when(orders.countByStatus("REFUND_PENDING")).thenReturn(4L);
-        when(payments.countByStatus("SUCCEEDED")).thenReturn(11L);
+        when(orders.countByStatus(OrderStatus.CANCELLED)).thenReturn(4L);
+        when(payments.countByStatus(PaymentStatus.SUCCEEDED)).thenReturn(11L);
 
         assertThat(reporting.totalPaidRevenue()).isEqualByComparingTo("800000");
         assertThat(reporting.paidRevenueForEvent(5L)).isEqualByComparingTo("120000");
-        assertThat(reporting.countOrdersByStatus("REFUND_PENDING")).isEqualTo(4L);
+        assertThat(reporting.countOrdersByStatus("CANCELLED")).isEqualTo(4L);
         assertThat(reporting.countPaymentsByStatus("SUCCEEDED")).isEqualTo(11L);
     }
 }

@@ -51,7 +51,7 @@ public class IamDataSeeder implements CommandLineRunner {
           .fullName(fullName)
           .phone(phone)
           .roles(roleSet)
-          .status("ACTIVE")
+          .status(UserStatus.ACTIVE)
           .build());
       log.info("Seeded {} user {} / {}", role, email, password);
       return u;

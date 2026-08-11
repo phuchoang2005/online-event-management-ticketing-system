@@ -28,8 +28,9 @@ public class Feedback {
     @Column(name = "event_id")
     private Long eventId;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
-    private String category;
+    private FeedbackCategory category;
 
     @Column(nullable = false, length = 255)
     private String subject;
@@ -40,8 +41,9 @@ public class Feedback {
     @Column
     private Integer rating;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String status;
+    private FeedbackStatus status;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -54,7 +56,7 @@ public class Feedback {
 
     @PrePersist
     void prePersist() {
-        if (status == null) status = "NEW";
+        if (status == null) status = FeedbackStatus.NEW;
         if (createdAt == null) createdAt = Instant.now();
     }
 }

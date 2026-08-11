@@ -17,10 +17,10 @@ public interface PaymentGateway {
     /**
      * Whether this gateway can handle the given provider/method.
      *
-     * @param provider the requested provider (e.g. {@code MOMO}, {@code VNPAY}, {@code MOCK})
+     * @param provider the requested provider
      * @return {@code true} if this gateway should be used for that provider
      */
-    boolean supports(String provider);
+    boolean supports(PaymentMethod provider);
 
     /**
      * Attempt to charge the order described by {@code request}.

@@ -62,11 +62,11 @@ public class SeatInventoryImpl implements SeatInventory {
             HttpStatus.BAD_REQUEST);
       }
       boolean lockExpired = s.getLockedUntil() != null && s.getLockedUntil().isBefore(now);
-      if (!"AVAILABLE".equals(s.getStatus()) && !(("LOCKED".equals(s.getStatus()) && lockExpired))) {
+      if (s.getStatus() != SeatStatus.AVAILABLE && !(s.getStatus() == SeatStatus.LOCKED && lockExpired)) {
         throw new AppException("SEAT_TAKEN",
             "Seat " + s.getRowLabel() + "-" + s.getSeatNumber() + " is no longer available.", HttpStatus.CONFLICT);
       }
-      s.setStatus("LOCKED");
+      s.setStatus(SeatStatus.LOCKED);
       s.setLockedBy(userId);
       s.setLockedUntil(lockUntil);
     }
@@ -82,13 +82,13 @@ public class SeatInventoryImpl implements SeatInventory {
 
     Instant now = Instant.now();
     for (EventSeat s : picked) {
-      if ("SOLD".equals(s.getStatus())) {
+      if (s.getStatus() == SeatStatus.SOLD) {
         throw new AppException("SEAT_TAKEN", "Seat already sold.", HttpStatus.CONFLICT);
       }
-      if (s.getLockedUntil() != null && s.getLockedUntil().isBefore(now) && !"AVAILABLE".equals(s.getStatus())) {
+      if (s.getLockedUntil() != null && s.getLockedUntil().isBefore(now) && s.getStatus() != SeatStatus.AVAILABLE) {
         throw new AppException("LOCK_EXPIRED", "Seat lock expired; please re-select seats.", HttpStatus.CONFLICT);
       }
-      s.setStatus("SOLD");
+      s.setStatus(SeatStatus.SOLD);
       s.setLockedBy(null);
       s.setLockedUntil(null);
     }
@@ -102,8 +102,8 @@ public class SeatInventoryImpl implements SeatInventory {
   public void releaseLocks(Long eventId, List<Long> seatIds) {
     List<EventSeat> picked = seats.findByIdIn(seatIds);
     for (EventSeat s : picked) {
-      if ("LOCKED".equals(s.getStatus())) {
-        s.setStatus("AVAILABLE");
+      if (s.getStatus() == SeatStatus.LOCKED) {
+        s.setStatus(SeatStatus.AVAILABLE);
         s.setLockedBy(null);
         s.setLockedUntil(null);
       }
@@ -117,8 +117,8 @@ public class SeatInventoryImpl implements SeatInventory {
   public void releaseSold(Long eventId, List<Long> seatIds) {
     List<EventSeat> picked = seats.findByIdIn(seatIds);
     for (EventSeat s : picked) {
-      if ("SOLD".equals(s.getStatus())) {
-        s.setStatus("AVAILABLE");
+      if (s.getStatus() == SeatStatus.SOLD) {
+        s.setStatus(SeatStatus.AVAILABLE);
         s.setLockedBy(null);
         s.setLockedUntil(null);
       }
@@ -156,6 +156,6 @@ public class SeatInventoryImpl implements SeatInventory {
 
   private static SeatDetail toDetail(EventSeat s) {
     return new SeatDetail(s.getId(), s.getTicketTypeId(), s.getRowLabel(),
-        s.getSeatNumber(), s.getSection(), s.getPrice(), s.getStatus());
+        s.getSeatNumber(), s.getSection(), s.getPrice(), s.getStatus().name());
   }
 }

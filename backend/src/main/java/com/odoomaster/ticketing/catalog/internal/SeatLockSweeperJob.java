@@ -51,7 +51,7 @@ public class SeatLockSweeperJob {
 
     Set<Long> affectedEvents = new HashSet<>();
     for (EventSeat s : expired) {
-      s.setStatus("AVAILABLE");
+      s.setStatus(SeatStatus.AVAILABLE);
       s.setLockedBy(null);
       s.setLockedUntil(null);
       affectedEvents.add(s.getEventId());

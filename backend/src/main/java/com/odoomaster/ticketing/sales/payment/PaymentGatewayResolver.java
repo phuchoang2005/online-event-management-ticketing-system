@@ -5,7 +5,7 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * Factory that selects the {@link PaymentGateway} {@link PaymentGateway#supports(String) supporting}
+ * Factory that selects the {@link PaymentGateway} {@link PaymentGateway#supports(PaymentMethod) supporting}
  * a requested provider.
  *
  * <p>Spring injects all {@code PaymentGateway} beans ordered by {@code @Order}, so the resolver
@@ -37,7 +37,7 @@ public class PaymentGatewayResolver {
      * @param provider the requested provider/method
      * @return the first gateway that supports {@code provider}, or the mock fallback
      */
-    public PaymentGateway resolve(String provider) {
+    public PaymentGateway resolve(PaymentMethod provider) {
         return gateways.stream()
                 .filter(g -> g.supports(provider))
                 .findFirst()

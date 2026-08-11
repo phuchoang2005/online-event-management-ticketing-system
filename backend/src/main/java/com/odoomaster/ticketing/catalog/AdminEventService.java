@@ -4,6 +4,8 @@ import com.odoomaster.ticketing.catalog.internal.CacheConfig;
 import com.odoomaster.ticketing.catalog.internal.Event;
 import com.odoomaster.ticketing.catalog.internal.EventCategory;
 import com.odoomaster.ticketing.catalog.internal.EventSeat;
+import com.odoomaster.ticketing.catalog.internal.EventStatus;
+import com.odoomaster.ticketing.catalog.internal.SeatStatus;
 import com.odoomaster.ticketing.catalog.AdminDtos.*;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.catalog.internal.EventCategoryRepository;
@@ -29,7 +31,7 @@ import java.util.*;
 @Service
 public class AdminEventService {
 
-    private static final Set<String> ALLOWED_STATUSES = Set.of("DRAFT", "PUBLISHED", "CANCELLED", "COMPLETED");
+    private static final Set<EventStatus> ALLOWED_STATUSES = EnumSet.allOf(EventStatus.class);
 
     private final EventRepository events;
     private final EventCategoryRepository categories;
@@ -63,11 +65,11 @@ public class AdminEventService {
         List<EventSeat> all = seats.findByEventIdOrderByRowLabelAscSeatNumberAsc(id);
         BigDecimal revenue = seats.sumSoldPriceForEvent(id);
         int total = all.size();
-        int sold = (int) all.stream().filter(s -> "SOLD".equals(s.getStatus())).count();
-        int avail = (int) all.stream().filter(s -> "AVAILABLE".equals(s.getStatus())).count();
+        int sold = (int) all.stream().filter(s -> s.getStatus() == SeatStatus.SOLD).count();
+        int avail = (int) all.stream().filter(s -> s.getStatus() == SeatStatus.AVAILABLE).count();
         return new AdminEventDetail(
                 e.getId(), e.getTitle(), e.getDescription(), e.getLocation(), e.getImageUrl(),
-                EventService.categoryRefs(e), e.getOrganizer(), e.getStartTime(), e.getEndTime(), e.getStatus(),
+                EventService.categoryRefs(e), e.getOrganizer(), e.getStartTime(), e.getEndTime(), e.getStatus().name(),
                 total, avail, sold, revenue,
                 buildSections(all));
     }
@@ -105,7 +107,7 @@ public class AdminEventService {
                 .imageUrl(req.imageUrl())
                 .startTime(req.startTime())
                 .endTime(req.endTime())
-                .status("DRAFT")
+                .status(EventStatus.DRAFT)
                 .build();
         e.setCategories(resolveCategories(req.categories()));
         events.save(e);
@@ -154,21 +156,20 @@ public class AdminEventService {
             @CacheEvict(value = CacheConfig.EVENT_SEATS, key = "#id")
     })
     public AdminEventDetail changeStatus(Long id, String status) {
-        if (status == null || !ALLOWED_STATUSES.contains(status)) {
-            throw new AppException("VALIDATION_FAILED",
-                    "Status must be one of " + ALLOWED_STATUSES, HttpStatus.BAD_REQUEST);
-        }
+        EventStatus target = EventStatus.parse(status)
+                .orElseThrow(() -> new AppException("VALIDATION_FAILED",
+                        "Status must be one of " + ALLOWED_STATUSES, HttpStatus.BAD_REQUEST));
         Event e = events.findById(id)
                 .orElseThrow(() -> new AppException("EVENT_NOT_FOUND", "Event not found.", HttpStatus.NOT_FOUND));
-        if ("PUBLISHED".equals(status) && seats.countByEventId(id) == 0) {
+        if (target == EventStatus.PUBLISHED && seats.countByEventId(id) == 0) {
             throw new AppException("EVENT_HAS_NO_SEATS",
                     "Cannot publish an event with no seats.", HttpStatus.CONFLICT);
         }
-        if ("DRAFT".equals(status) && seats.existsByEventIdAndStatus(id, "SOLD")) {
+        if (target == EventStatus.DRAFT && seats.existsByEventIdAndStatus(id, SeatStatus.SOLD)) {
             throw new AppException("EVENT_HAS_TICKETS",
                     "Cannot revert to DRAFT: event already has issued tickets.", HttpStatus.CONFLICT);
         }
-        e.setStatus(status);
+        e.setStatus(target);
         events.save(e);
         return detail(e.getId());
     }
@@ -221,7 +222,7 @@ public class AdminEventService {
                         .rowLabel(rl)
                         .seatNumber(sn)
                         .price(req.price())
-                        .status("AVAILABLE")
+                        .status(SeatStatus.AVAILABLE)
                         .build());
             }
         }
@@ -259,7 +260,7 @@ public class AdminEventService {
     public void delete(Long id) {
         Event e = events.findById(id)
                 .orElseThrow(() -> new AppException("EVENT_NOT_FOUND", "Event not found.", HttpStatus.NOT_FOUND));
-        if ("PUBLISHED".equals(e.getStatus())) {
+        if (e.getStatus() == EventStatus.PUBLISHED) {
             throw new AppException("EVENT_PUBLISHED_NOT_DELETABLE",
                     "Cannot delete a PUBLISHED event. Cancel or complete it first.",
                     HttpStatus.CONFLICT);
@@ -285,7 +286,7 @@ public class AdminEventService {
             throw new AppException("SECTION_NOT_FOUND",
                     "Section not found: " + section, HttpStatus.NOT_FOUND);
         }
-        boolean hasSold = current.stream().anyMatch(s -> "SOLD".equals(s.getStatus()) || "LOCKED".equals(s.getStatus()));
+        boolean hasSold = current.stream().anyMatch(s -> s.getStatus() == SeatStatus.SOLD || s.getStatus() == SeatStatus.LOCKED);
         if (hasSold) {
             throw new AppException("SECTION_IN_USE",
                     "Cannot delete a section with sold or locked seats.", HttpStatus.CONFLICT);
@@ -316,12 +317,12 @@ public class AdminEventService {
     private AdminEventRow toRow(Event e) {
         List<EventSeat> all = seats.findByEventIdOrderByRowLabelAscSeatNumberAsc(e.getId());
         int total = all.size();
-        int sold = (int) all.stream().filter(s -> "SOLD".equals(s.getStatus())).count();
-        int avail = (int) all.stream().filter(s -> "AVAILABLE".equals(s.getStatus())).count();
+        int sold = (int) all.stream().filter(s -> s.getStatus() == SeatStatus.SOLD).count();
+        int avail = (int) all.stream().filter(s -> s.getStatus() == SeatStatus.AVAILABLE).count();
         BigDecimal revenue = seats.sumSoldPriceForEvent(e.getId());
         return new AdminEventRow(
                 e.getId(), e.getTitle(), e.getLocation(), EventService.categoryRefs(e), e.getOrganizer(),
-                e.getStatus(), e.getStartTime(), e.getEndTime(), e.getCreatedAt(),
+                e.getStatus().name(), e.getStartTime(), e.getEndTime(), e.getCreatedAt(),
                 total, avail, sold, revenue);
     }
 
@@ -338,8 +339,8 @@ public class AdminEventService {
             BigDecimal price = list.get(0).getPrice();
             for (EventSeat s : list) {
                 rows.add(s.getRowLabel());
-                if ("SOLD".equals(s.getStatus())) sold++;
-                else if ("AVAILABLE".equals(s.getStatus())) avail++;
+                if (s.getStatus() == SeatStatus.SOLD) sold++;
+                else if (s.getStatus() == SeatStatus.AVAILABLE) avail++;
             }
             out.add(new SectionSummary(entry.getKey(), price, rows.size(), list.size(), avail, sold));
         }

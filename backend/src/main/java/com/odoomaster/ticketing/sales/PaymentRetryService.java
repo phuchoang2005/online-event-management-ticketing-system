@@ -1,6 +1,7 @@
 package com.odoomaster.ticketing.sales;
 
 import com.odoomaster.ticketing.sales.internal.PaymentRetry;
+import com.odoomaster.ticketing.sales.internal.PaymentRetryStatus;
 import com.odoomaster.ticketing.sales.internal.PaymentRetryRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,7 +19,7 @@ public class PaymentRetryService {
     }
 
     @Transactional
-    public PaymentRetry recordAttempt(Long paymentId, String status, String errorCode) {
+    public PaymentRetry recordAttempt(Long paymentId, PaymentRetryStatus status, String errorCode) {
         int next = (int) retries.countByPaymentId(paymentId) + 1;
         PaymentRetry r = PaymentRetry.builder()
                 .paymentId(paymentId)

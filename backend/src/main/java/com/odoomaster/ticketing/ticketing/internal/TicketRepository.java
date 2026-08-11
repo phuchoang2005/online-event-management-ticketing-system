@@ -15,11 +15,11 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
 
   Page<Ticket> findByUserIdOrderByIssuedAtDesc(Long userId, Pageable pageable);
 
-  Page<Ticket> findByUserIdAndStatusOrderByIssuedAtDesc(Long userId, String status, Pageable pageable);
+  Page<Ticket> findByUserIdAndStatusOrderByIssuedAtDesc(Long userId, TicketStatus status, Pageable pageable);
 
   long countByUserId(Long userId);
 
-  long countByUserIdAndStatus(Long userId, String status);
+  long countByUserIdAndStatus(Long userId, TicketStatus status);
 
   Optional<Ticket> findByIdAndUserId(Long id, Long userId);
 
@@ -27,9 +27,9 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
 
   long countByEventId(Long eventId);
 
-  long countByEventIdAndStatus(Long eventId, String status);
+  long countByEventIdAndStatus(Long eventId, TicketStatus status);
 
-  long countByStatus(String status);
+  long countByStatus(TicketStatus status);
 
   List<Ticket> findByEventId(Long eventId);
 }

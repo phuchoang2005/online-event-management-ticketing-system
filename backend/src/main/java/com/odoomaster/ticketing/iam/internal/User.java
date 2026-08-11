@@ -40,8 +40,9 @@ public class User {
     @Builder.Default
     private Set<Role> roles = new HashSet<>();
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String status;
+    private UserStatus status;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -54,7 +55,7 @@ public class User {
         Instant now = Instant.now();
         if (createdAt == null) createdAt = now;
         updatedAt = now;
-        if (status == null) status = "ACTIVE";
+        if (status == null) status = UserStatus.ACTIVE;
     }
 
     @PreUpdate

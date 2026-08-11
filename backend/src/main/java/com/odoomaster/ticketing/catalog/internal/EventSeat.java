@@ -44,8 +44,9 @@ public class EventSeat {
     @Column(nullable = false, precision = 12, scale = 0)
     private BigDecimal price;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
-    private String status;
+    private SeatStatus status;
 
     @Column(name = "locked_by")
     private Long lockedBy;
@@ -59,7 +60,7 @@ public class EventSeat {
 
     @PrePersist
     void prePersist() {
-        if (status == null) status = "AVAILABLE";
+        if (status == null) status = SeatStatus.AVAILABLE;
         if (version == null) version = 0;
     }
 }

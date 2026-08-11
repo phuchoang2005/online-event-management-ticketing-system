@@ -1,6 +1,8 @@
 package com.odoomaster.ticketing.notification;
 
 import com.odoomaster.ticketing.notification.internal.Notification;
+import com.odoomaster.ticketing.notification.internal.NotificationChannel;
+import com.odoomaster.ticketing.notification.internal.NotificationStatus;
 import com.odoomaster.ticketing.notification.NotificationDtos.*;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.notification.internal.NotificationRepository;
@@ -88,8 +90,8 @@ public class NotificationService {
                 .type(type)
                 .title(title)
                 .content(content)
-                .channel(channel != null ? channel : "IN_APP")
-                .status("SENT")
+                .channel(NotificationChannel.parse(channel).orElse(NotificationChannel.IN_APP))
+                .status(NotificationStatus.SENT)
                 .linkUrl(linkUrl)
                 .sentAt(Instant.now())
                 .build());
@@ -97,7 +99,7 @@ public class NotificationService {
 
     private NotificationView view(Notification n) {
         return new NotificationView(
-                n.getId(), n.getType(), n.getTitle(), n.getContent(), n.getChannel(),
-                n.getStatus(), n.getLinkUrl(), n.getSentAt(), n.getReadAt(), n.getCreatedAt());
+                n.getId(), n.getType(), n.getTitle(), n.getContent(), n.getChannel().name(),
+                n.getStatus().name(), n.getLinkUrl(), n.getSentAt(), n.getReadAt(), n.getCreatedAt());
     }
 }

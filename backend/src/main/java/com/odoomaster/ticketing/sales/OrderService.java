@@ -10,6 +10,7 @@ import com.odoomaster.ticketing.ticketing.TicketIssuance.TicketLine;
 import com.odoomaster.ticketing.ticketing.TicketIssuance.TicketOrder;
 import com.odoomaster.ticketing.sales.OrderDtos.*;
 import com.odoomaster.ticketing.sales.internal.Order;
+import com.odoomaster.ticketing.sales.internal.OrderStatus;
 import com.odoomaster.ticketing.sales.internal.OrderItem;
 import com.odoomaster.ticketing.sales.internal.Payment;
 import com.odoomaster.ticketing.sales.internal.OrderRepository;
@@ -18,6 +19,7 @@ import com.odoomaster.ticketing.sales.internal.PaymentRepository;
 import com.odoomaster.ticketing.shared.TicketsIssuedEvent;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.sales.payment.PaymentGateway;
+import com.odoomaster.ticketing.sales.payment.PaymentMethod;
 import com.odoomaster.ticketing.sales.payment.PaymentGatewayResolver;
 import com.odoomaster.ticketing.sales.payment.PaymentRequest;
 import com.odoomaster.ticketing.sales.payment.PaymentResult;
@@ -110,7 +112,7 @@ public class OrderService {
                 .userId(userId)
                 .eventId(event.id())
                 .totalAmount(total)
-                .status("PENDING")
+                .status(OrderStatus.PENDING)
                 .build();
         orders.save(order);
 
@@ -151,12 +153,18 @@ public class OrderService {
         if (!Objects.equals(order.getUserId(), userId)) {
             throw new AppException("FORBIDDEN", "Order does not belong to current user.", HttpStatus.FORBIDDEN);
         }
-        if ("PAID".equals(order.getStatus())) {
+        if (order.getStatus() == OrderStatus.PAID) {
             return view(order);
         }
-        if (!"PENDING".equals(order.getStatus())) {
+        if (order.getStatus() != OrderStatus.PENDING) {
             throw new AppException("ORDER_STATE_INVALID", "Order cannot be paid in state " + order.getStatus(), HttpStatus.CONFLICT);
         }
+
+        // The wire contract keeps `method` a String (see PaymentMethod's javadoc); parse it here so a
+        // bad value is a 400 VALIDATION_FAILED rather than a Jackson 500.
+        PaymentMethod method = PaymentMethod.parse(req.method())
+                .orElseThrow(() -> new AppException("VALIDATION_FAILED",
+                        "Unsupported payment method: " + req.method(), HttpStatus.BAD_REQUEST));
 
         List<OrderItem> items = orderItems.findByOrderId(order.getId());
         List<Long> seatIds = items.stream().map(OrderItem::getEventSeatId).toList();
@@ -165,11 +173,11 @@ public class OrderService {
         seatInventory.markSold(order.getEventId(), seatIds);
 
         // Charge via the resolved payment gateway (Strategy). The mock gateway always succeeds.
-        PaymentGateway gateway = paymentGatewayResolver.resolve(req.method());
-        PaymentResult result = gateway.charge(new PaymentRequest(order.getId(), req.method(), order.getTotalAmount()));
+        PaymentGateway gateway = paymentGatewayResolver.resolve(method);
+        PaymentResult result = gateway.charge(new PaymentRequest(order.getId(), method, order.getTotalAmount()));
         Payment p = Payment.builder()
                 .orderId(order.getId())
-                .provider(req.method())
+                .provider(method)
                 .transactionId(result.transactionId())
                 .amount(order.getTotalAmount())
                 .status(result.status())
@@ -177,8 +185,8 @@ public class OrderService {
         payments.save(p);
 
         Instant now = Instant.now();
-        order.setStatus("PAID");
-        order.setPaymentMethod(req.method());
+        order.setStatus(OrderStatus.PAID);
+        order.setPaymentMethod(method);
         order.setPaidAt(now);
         orders.save(order);
 
@@ -192,7 +200,7 @@ public class OrderService {
         // in-app notification. Runs synchronously within this transaction.
         String eventTitle = eventCatalog.find(order.getEventId()).map(EventSummary::title).orElse(null);
         eventPublisher.publishEvent(new TicketsIssuedEvent(
-                userId, order.getId(), eventTitle, ticketCount, req.method()));
+                userId, order.getId(), eventTitle, ticketCount, method.name()));
 
         return view(order);
     }
@@ -204,17 +212,17 @@ public class OrderService {
         if (!Objects.equals(order.getUserId(), userId)) {
             throw new AppException("FORBIDDEN", "Order does not belong to current user.", HttpStatus.FORBIDDEN);
         }
-        if ("PAID".equals(order.getStatus())) {
+        if (order.getStatus() == OrderStatus.PAID) {
             throw new AppException("ORDER_ALREADY_PAID", "Cannot cancel a paid order.", HttpStatus.CONFLICT);
         }
-        if ("CANCELLED".equals(order.getStatus())) return;
+        if (order.getStatus() == OrderStatus.CANCELLED) return;
 
         List<OrderItem> items = orderItems.findByOrderId(order.getId());
         List<Long> seatIds = items.stream().map(OrderItem::getEventSeatId).toList();
         // Catalog releases any still-LOCKED seats back to AVAILABLE (and evicts caches).
         seatInventory.releaseLocks(order.getEventId(), seatIds);
         orderItems.deleteAll(items);
-        order.setStatus("CANCELLED");
+        order.setStatus(OrderStatus.CANCELLED);
         orders.save(order);
     }
 
@@ -253,7 +261,8 @@ public class OrderService {
         }).toList();
         return new OrderView(order.getId(), order.getEventId(),
                 event != null ? event.title() : null,
-                order.getStatus(), order.getPaymentMethod(),
+                order.getStatus().name(),
+                order.getPaymentMethod() == null ? null : order.getPaymentMethod().name(),
                 order.getTotalAmount(), order.getCreatedAt(), order.getPaidAt(), rows);
     }
 }

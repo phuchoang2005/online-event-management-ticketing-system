@@ -9,5 +9,5 @@ import java.math.BigDecimal;
  * @param provider the requested provider/method (e.g. {@code MOMO}, {@code VNPAY}, {@code MOCK})
  * @param amount the amount to charge
  */
-public record PaymentRequest(Long orderId, String provider, BigDecimal amount) {
+public record PaymentRequest(Long orderId, PaymentMethod provider, BigDecimal amount) {
 }

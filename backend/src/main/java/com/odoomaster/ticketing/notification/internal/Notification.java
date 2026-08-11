@@ -34,11 +34,13 @@ public class Notification {
     @Column(columnDefinition = "TEXT")
     private String content;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "channel", length = 20)
-    private String channel;
+    private NotificationChannel channel;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String status;
+    private NotificationStatus status;
 
     @Column(name = "link_url", length = 500)
     private String linkUrl;
@@ -56,8 +58,8 @@ public class Notification {
     void prePersist() {
         Instant now = Instant.now();
         if (createdAt == null) createdAt = now;
-        if (status == null) status = "SENT";
-        if (sentAt == null && "SENT".equals(status)) sentAt = now;
-        if (channel == null) channel = "IN_APP";
+        if (status == null) status = NotificationStatus.SENT;
+        if (sentAt == null && status == NotificationStatus.SENT) sentAt = now;
+        if (channel == null) channel = NotificationChannel.IN_APP;
     }
 }

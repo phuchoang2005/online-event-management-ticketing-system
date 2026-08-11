@@ -9,6 +9,7 @@ import com.odoomaster.ticketing.catalog.SeatInventory.SeatDetail;
 import com.odoomaster.ticketing.ticketing.TicketIssuance;
 import com.odoomaster.ticketing.ticketing.TicketIssuance.TicketOrder;
 import com.odoomaster.ticketing.sales.internal.Order;
+import com.odoomaster.ticketing.sales.internal.OrderStatus;
 import com.odoomaster.ticketing.sales.internal.OrderItem;
 import com.odoomaster.ticketing.sales.OrderDtos.CreateOrderRequest;
 import com.odoomaster.ticketing.sales.OrderDtos.PayRequest;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -153,7 +155,7 @@ class OrderServiceReliabilityTest {
 
     @Test
     void pay_givenPendingOrder_marksSoldIssuesTicketsAndNotifies() {
-        Order order = order(20L, "PENDING", 5L);
+        Order order = order(20L, OrderStatus.PENDING, 5L);
         OrderItem item = item(30L, 10L);
         when(orders.findById(20L)).thenReturn(Optional.of(order));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of(item));
@@ -164,7 +166,7 @@ class OrderServiceReliabilityTest {
 
         service.pay(5L, 20L, new PayRequest("MOCK"));
 
-        assertThat(order.getStatus()).isEqualTo("PAID");
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
         assertThat(order.getPaidAt()).isNotNull();
         verify(seatInventory).markSold(1L, List.of(10L));
         verify(payments).save(any());
@@ -176,7 +178,7 @@ class OrderServiceReliabilityTest {
 
     @Test
     void pay_issuesOneTicketLinePerOrderItem() {
-        Order order = order(20L, "PENDING", 5L);
+        Order order = order(20L, OrderStatus.PENDING, 5L);
         when(orders.findById(20L)).thenReturn(Optional.of(order));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of(item(30L, 10L)));
         when(ticketIssuance.issueForOrder(any())).thenReturn(1);
@@ -198,23 +200,19 @@ class OrderServiceReliabilityTest {
     }
 
     @ParameterizedTest
-    @CsvSource({
-            "CANCELLED,Order cannot be paid",
-            "REFUND_PENDING,Order cannot be paid",
-            "EXPIRED,Order cannot be paid"
-    })
-    void pay_givenInvalidOrderState_rejectsPayment(String status, String message) {
+    @EnumSource(value = OrderStatus.class, names = {"CANCELLED", "REFUNDED"})
+    void pay_givenInvalidOrderState_rejectsPayment(OrderStatus status) {
         when(orders.findById(20L)).thenReturn(Optional.of(order(20L, status, 5L)));
 
         assertThatThrownBy(() -> service.pay(5L, 20L, new PayRequest("MOCK")))
                 .isInstanceOf(AppException.class)
-                .hasMessageContaining(message);
+                .hasMessageContaining("Order cannot be paid");
         verify(seatInventory, never()).markSold(anyLong(), anyList());
     }
 
     @Test
     void pay_givenAlreadyPaidOrder_isIdempotentAndDoesNotReissue() {
-        Order paid = order(20L, "PAID", 5L);
+        Order paid = order(20L, OrderStatus.PAID, 5L);
         when(orders.findById(20L)).thenReturn(Optional.of(paid));
         when(eventCatalog.find(1L)).thenReturn(Optional.of(summary("PUBLISHED")));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of());
@@ -229,7 +227,7 @@ class OrderServiceReliabilityTest {
 
     @Test
     void pay_givenSeatRejectedByInventory_doesNotChargeOrIssueTickets() {
-        Order order = order(20L, "PENDING", 5L);
+        Order order = order(20L, OrderStatus.PENDING, 5L);
         when(orders.findById(20L)).thenReturn(Optional.of(order));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of(item(30L, 10L)));
         when(seatInventory.markSold(1L, List.of(10L))).thenThrow(new AppException(
@@ -244,13 +242,13 @@ class OrderServiceReliabilityTest {
 
     @Test
     void cancel_givenPendingOrder_releasesSeatsAndDeletesItems() {
-        Order order = order(20L, "PENDING", 5L);
+        Order order = order(20L, OrderStatus.PENDING, 5L);
         when(orders.findById(20L)).thenReturn(Optional.of(order));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of(item(30L, 10L)));
 
         service.cancel(5L, 20L);
 
-        assertThat(order.getStatus()).isEqualTo("CANCELLED");
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
         verify(seatInventory).releaseLocks(1L, List.of(10L));
         verify(orderItems).deleteAll(anyList());
     }
@@ -260,10 +258,10 @@ class OrderServiceReliabilityTest {
             "PAID,Cannot cancel a paid order",
             "CANCELLED,"
     })
-    void cancel_givenTerminalState_handlesSafely(String status, String message) {
+    void cancel_givenTerminalState_handlesSafely(OrderStatus status, String message) {
         when(orders.findById(20L)).thenReturn(Optional.of(order(20L, status, 5L)));
 
-        if ("CANCELLED".equals(status)) {
+        if (status == OrderStatus.CANCELLED) {
             service.cancel(5L, 20L);
             verify(seatInventory, never()).releaseLocks(anyLong(), anyList());
         } else {
@@ -275,7 +273,7 @@ class OrderServiceReliabilityTest {
 
     @Test
     void getMine_givenOrderOwnedByAnotherUser_rejectsAccess() {
-        when(orders.findById(20L)).thenReturn(Optional.of(order(20L, "PENDING", 99L)));
+        when(orders.findById(20L)).thenReturn(Optional.of(order(20L, OrderStatus.PENDING, 99L)));
 
         assertThatThrownBy(() -> service.getMine(5L, 20L))
                 .isInstanceOf(AppException.class)
@@ -286,7 +284,7 @@ class OrderServiceReliabilityTest {
     @Test
     void listMine_returnsOrdersInRepositoryOrder() {
         when(orders.findByUserIdOrderByCreatedAtDesc(5L))
-                .thenReturn(List.of(order(2L, "PENDING", 5L), order(1L, "PAID", 5L)));
+                .thenReturn(List.of(order(2L, OrderStatus.PENDING, 5L), order(1L, OrderStatus.PAID, 5L)));
         when(eventCatalog.find(1L)).thenReturn(Optional.of(summary("PUBLISHED")));
         when(orderItems.findByOrderId(anyLong())).thenReturn(List.of());
         when(seatInventory.findSeats(List.of())).thenReturn(List.of());
@@ -303,7 +301,7 @@ class OrderServiceReliabilityTest {
         return new SeatDetail(id, 3L, "A", String.valueOf(id), "MAIN", price, "LOCKED");
     }
 
-    private static Order order(Long id, String status, Long userId) {
+    private static Order order(Long id, OrderStatus status, Long userId) {
         Order order = new Order();
         order.setId(id);
         order.setUserId(userId);

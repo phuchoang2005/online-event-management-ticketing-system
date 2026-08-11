@@ -3,6 +3,8 @@ package com.odoomaster.ticketing.catalog;
 import com.odoomaster.ticketing.catalog.internal.Event;
 import com.odoomaster.ticketing.catalog.internal.EventCategory;
 import com.odoomaster.ticketing.catalog.internal.EventSeat;
+import com.odoomaster.ticketing.catalog.internal.EventStatus;
+import com.odoomaster.ticketing.catalog.internal.SeatStatus;
 import com.odoomaster.ticketing.catalog.EventDtos.*;
 import com.odoomaster.ticketing.catalog.internal.CacheConfig;
 import com.odoomaster.ticketing.shared.AppException;
@@ -40,7 +42,7 @@ public class EventService {
 
     public List<EventSummary> listTrending(int limit) {
         int safeLimit = Math.min(20, Math.max(1, limit));
-        return events.findTrending("PUBLISHED", clock.instant(), PageRequest.of(0, safeLimit))
+        return events.findTrending(EventStatus.PUBLISHED, clock.instant(), PageRequest.of(0, safeLimit))
                 .stream().map(this::toSummary).toList();
     }
 
@@ -49,7 +51,7 @@ public class EventService {
         int safeLimit = Math.min(100, Math.max(1, limit));
         String nCat = (category == null || category.isBlank()) ? null : category;
         String nQ = (q == null || q.isBlank()) ? null : q.trim();
-        Page<Event> result = events.findPublished("PUBLISHED", nCat, nQ,
+        Page<Event> result = events.findPublished(EventStatus.PUBLISHED, nCat, nQ,
                 PageRequest.of(safePage - 1, safeLimit));
         List<EventSummary> items = result.getContent().stream().map(this::toSummary).toList();
         boolean hasMore = result.hasNext();
@@ -67,15 +69,15 @@ public class EventService {
     private EventSummary toSummary(Event e) {
         var s = seats.findByEventIdOrderByRowLabelAscSeatNumberAsc(e.getId());
         BigDecimal min = s.stream().map(EventSeat::getPrice).min(Comparator.naturalOrder()).orElse(BigDecimal.ZERO);
-        int avail = (int) s.stream().filter(x -> "AVAILABLE".equals(x.getStatus())).count();
+        int avail = (int) s.stream().filter(x -> x.getStatus() == SeatStatus.AVAILABLE).count();
         return new EventSummary(e.getId(), e.getTitle(), e.getLocation(), e.getImageUrl(),
                 categoryRefs(e), e.getOrganizer(),
-                e.getStartTime(), e.getEndTime(), e.getStatus(), min, avail, s.size());
+                e.getStartTime(), e.getEndTime(), e.getStatus().name(), min, avail, s.size());
     }
 
     @Cacheable(CacheConfig.EVENTS_LIST)
     public List<EventSummary> list() {
-        return events.findAllByStatusOrderByStartTimeAsc("PUBLISHED").stream()
+        return events.findAllByStatusOrderByStartTimeAsc(EventStatus.PUBLISHED).stream()
                 .map(this::toSummary)
                 .toList();
     }
@@ -87,10 +89,10 @@ public class EventService {
         var s = seats.findByEventIdOrderByRowLabelAscSeatNumberAsc(e.getId());
         BigDecimal min = s.stream().map(EventSeat::getPrice).min(Comparator.naturalOrder()).orElse(BigDecimal.ZERO);
         BigDecimal max = s.stream().map(EventSeat::getPrice).max(Comparator.naturalOrder()).orElse(BigDecimal.ZERO);
-        int avail = (int) s.stream().filter(x -> "AVAILABLE".equals(x.getStatus())).count();
+        int avail = (int) s.stream().filter(x -> x.getStatus() == SeatStatus.AVAILABLE).count();
         return new EventDetail(e.getId(), e.getTitle(), e.getDescription(), e.getLocation(), e.getImageUrl(),
                 categoryRefs(e), e.getOrganizer(),
-                e.getStartTime(), e.getEndTime(), e.getStatus(), min, max, avail, s.size());
+                e.getStartTime(), e.getEndTime(), e.getStatus().name(), min, max, avail, s.size());
     }
 
     @Cacheable(value = CacheConfig.EVENT_SEATS, key = "#eventId")
@@ -100,7 +102,7 @@ public class EventService {
         }
         var list = seats.findByEventIdOrderByRowLabelAscSeatNumberAsc(eventId).stream()
                 .map(s -> new SeatItem(s.getId(), s.getRowLabel(), s.getSeatNumber(), s.getSection(),
-                        s.getPrice(), s.getStatus(), s.getLockedUntil()))
+                        s.getPrice(), s.getStatus().name(), s.getLockedUntil()))
                 .toList();
         return new SeatMap(eventId, list);
     }

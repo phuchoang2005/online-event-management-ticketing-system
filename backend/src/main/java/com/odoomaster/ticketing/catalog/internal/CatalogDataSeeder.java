@@ -336,7 +336,7 @@ public class CatalogDataSeeder implements CommandLineRunner {
         .imageUrl(imageUrl)
         .startTime(start)
         .endTime(start.plus(3, ChronoUnit.HOURS))
-        .status("PUBLISHED")
+        .status(EventStatus.PUBLISHED)
         .build();
     e.setCategories(catSet);
     events.save(e);
@@ -367,7 +367,7 @@ public class CatalogDataSeeder implements CommandLineRunner {
               .rowLabel(rl)
               .seatNumber(sn)
               .price(sec.price)
-              .status("AVAILABLE")
+              .status(SeatStatus.AVAILABLE)
               .build());
         }
       }

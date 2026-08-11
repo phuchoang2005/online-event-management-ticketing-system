@@ -80,9 +80,87 @@ Goal: establish the decision contract and the progress log before any code moves
 
 ---
 
-## Sprint 1 — Typed vocabularies
+## Sprint 1 — Typed vocabularies ✅
 
-_Pending._
+Goal: replace every status string literal with a typed enum, byte-identical on the wire and in the
+database, with no Flyway migration.
+
+| # | Change | Status |
+|---|---|---|
+| 1 | 13 enums, each declared in the module that persists it: `catalog::internal` `SeatStatus`/`EventStatus`; `sales::internal` `OrderStatus`/`PaymentRetryStatus`; `sales.payment` `PaymentStatus`/`PaymentMethod`; `ticketing::internal` `TicketStatus`/`CheckInStatus`; `feedback::internal` `FeedbackStatus`/`FeedbackCategory`; `notification::internal` `NotificationStatus`/`NotificationChannel`; `iam::internal` `UserStatus`. Each publishes a lenient `parse(String) → Optional<T>` that tolerates case/whitespace and **never throws** | ✅ |
+| 2 | Retire the three private `Set<String>` vocabularies (`AdminEventService.ALLOWED_STATUSES`, `FeedbackService.VALID_STATUSES`/`VALID_CATEGORIES`, `TicketService.TICKET_STATUSES`) in favour of `EnumSet.allOf(...)` beside the column they govern | ✅ |
+| 3 | Map 13 entity columns with `@Enumerated(EnumType.STRING)`, `length` preserved on every field; `@PrePersist` defaults become enum constants | ✅ |
+| 4 | **Convert all 7 JPQL status literals to bound parameters** (`OrderRepository` ×4 including `revenueByDay`, `EventSeatRepository` ×3), keeping the old method names as `default` wrappers so no call site moved. Retype 14 derived-query parameters across 6 repositories | ✅ |
+| 5 | **Make the three reporting facet impls the anti-corruption layer**: `SalesReportingImpl`, `TicketingReportingImpl` and `EventCatalogImpl` lenient-parse their `String` argument and answer `0L` for anything they do not model. Published facets, request DTOs and response DTOs all keep `String` | ✅ |
+| 6 | Bug (a) part 1: `PaymentResult` gains a typed `PaymentStatus` and an `errorCode`; `PaymentGateway.supports` / `PaymentGatewayResolver.resolve` / `PaymentRequest.provider` take `PaymentMethod`; `OrderService.pay` parses `req.method()` and rejects garbage as `400 VALIDATION_FAILED` | ✅ |
+| 7 | **Fix three always-false comparisons in `AdminEventService`** — see Notes. New `AdminEventServiceReliabilityTest` (5 tests) covers them | ✅ |
+| 8 | New `domain/EnumVocabularyTest` (53 tests) pinning every constant's `name()` against the legacy on-disk string, every constant's length against its column width, the `parse` round-trip, and the lenient-on-unknown contract | ✅ |
+| 9 | Tests: rewrite 6 out-of-vocabulary `@CsvSource`/`@ValueSource` blocks to `@EnumSource`; make the two `ReliabilityMatrixTest` matrices exhaustive over the enums instead of hand-listed; convert 22 enum-vs-String assertions | ✅ |
+
+### Impact
+
+- **The vocabulary is now finite and checked by the compiler.** 87 status literals across 26 main
+  files became 13 enums. A typo is a compile error rather than a row nothing will ever match.
+- **`@Enumerated(EnumType.STRING)` keeps the persisted bytes identical**, so no Flyway migration was
+  needed and prod `ddl-auto: validate` is unaffected. Verified per column: the longest constant is
+  9 characters (`AVAILABLE`, `CANCELLED`, `SUCCEEDED`, `PUBLISHED`) against a 16–32 character column.
+  `EnumVocabularyTest` now enforces both properties on every build.
+- **The admin dashboard is protected.** `AnalyticsService` counts five statuses no code path writes
+  (`EXPIRED`, `REFUND_PENDING`, `REFUNDED`, `PENDING`, `FAILED`). A bare `valueOf` in the reporting
+  facets would have thrown `IllegalArgumentException` and 500'd `/v1/admin/analytics` on every
+  request; the lenient contract answers `0` exactly as the raw-string columns did.
+- **No enum crosses a module boundary**, so `ModularityTests.verify()` and the facet table are
+  untouched — zero `@NamedInterface`, `allowedDependencies` or doc-table changes in this sprint.
+- **Tests.** 727 → 758 (+31 net): +53 `EnumVocabularyTest`, +5 `AdminEventServiceReliabilityTest`,
+  −20 net from `ReliabilityMatrixTest` (604 → 584, see Notes), −7 from the deleted
+  out-of-vocabulary parameterized rows.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `cd backend && mvn clean test` (JDK 21) | ✅ BUILD SUCCESS — 758 tests, 0 failures, 0 errors |
+| `ModularityTests.verify()` + `exposesTheDeclaredNamedInterfaces()` | ✅ green, unchanged — no enum is published, so the 10-facet table is untouched |
+| **Grep gate** — status string literals outside an enum declaration | ✅ only the intentional ones remain: `AnalyticsService`'s facet arguments (`String` by contract, rule 1) and two `"IN_APP"` arguments to `NotificationService.create`'s `String` channel parameter |
+| **Negative check** — reintroduce `"PUBLISHED".equals(e.getStatus())` in `AdminEventService.delete` | ✅ now **fails**: `delete_givenPublishedEvent_refusesAndDoesNotCascade` → `Expecting code to raise a throwable.` Probe reverted; suite re-run green |
+| Persisted values / wire format / DB schema | unchanged — no migration added |
+
+### Notes
+
+- **Three silent breaks that the type system did not catch, and neither did 727 tests.**
+  `AdminEventService` compared a status with `"PUBLISHED".equals(e.getStatus())`. Once the getter
+  returned an enum this still *compiled* — `String.equals(Object)` accepts any argument — but
+  evaluated to `false` forever. The consequences were real: `delete()` would no longer refuse to
+  delete a **PUBLISHED** event (cascading away its orders and tickets), and `buildSections` tallied
+  `0 sold / 0 available` for every section. Two sibling sites at lines 342–343 had the same shape.
+  None of the three had any test coverage, which is why the suite stayed green through the break.
+  They were found by grepping for surviving literals — the gate is now a standing verification row,
+  and `AdminEventServiceReliabilityTest` pins all three. **This is the single most important finding
+  of the sprint**: `String.equals(enum)` is invisible to both `javac` and a green test run.
+- **`NotificationChannel` models `EMAIL` and `SMS`, `OrderStatus` does not model `EXPIRED`.** The
+  distinction is *who writes the value*. `NotificationService.create` accepts a caller-supplied
+  channel and persists it verbatim — `NotificationServiceReliabilityTest` exercises `EMAIL` and
+  `SMS` — so leaving them out would have silently coerced them to `IN_APP`, a data change. Nothing
+  anywhere writes `EXPIRED` or `REFUND_PENDING`; they are only ever *queried* by analytics, so
+  modelling them would make the dashboard report invented states as real ones. Rule recorded in
+  ADR-0013 §1 and pinned by `EnumVocabularyTest.analyticsFictionsAreDeliberatelyNotModelled`.
+- **`ReliabilityMatrixTest` went 604 → 584 and got stricter.** Its two hand-written matrices asserted
+  on seven statuses no code path can produce (`BOOKED`, `HELD`, `REFUND_PENDING` on seats;
+  `REFUNDED`, `PENDING`, `EXPIRED` on tickets) — untypeable once the vocabulary is finite. They were
+  replaced with matrices exhaustive over `SeatStatus × {no lock, lapsed lock, live lock}` (9 cases)
+  and `TicketStatus × {prior check-in, none}` (6 cases). Fewer tests, complete coverage of a domain
+  that is now actually bounded. Re-pointing them at real aggregate methods is Sprint 3/5 work.
+- **The 7 JPQL literals were the quiet risk.** `WHERE o.status = 'PAID'` compiles and passes every
+  test in this repo regardless of whether Hibernate resolves it correctly, because nothing here boots
+  Hibernate (baseline note 6). All 7 are now bound parameters. The manual smoke gate is the only
+  pre-production check for this class of change until the optional Sprint 7 lands.
+- **Request DTOs deliberately still speak `String`.** `PayRequest.method` keeps its
+  `@Pattern(regexp = "MOMO|VNPAY|MOCK")`; `OrderService.pay` parses it explicitly. An enum-typed
+  record component would make Jackson throw `HttpMessageNotReadableException`, which the catch-all
+  handler turns into `500 INTERNAL_ERROR` — silently breaking the `400 VALIDATION_FAILED` contract
+  the frontend depends on.
+- **Deviation from the plan: 13 enums, not 15.** The plan's count double-counted; the vocabularies
+  it enumerated map to 13 types. No vocabulary was dropped.
 
 ## Sprint 2 — `DomainException` + `ErrorCatalog`
 

@@ -3,6 +3,8 @@ package com.odoomaster.ticketing.sales.internal;
 import jakarta.persistence.*;
 import lombok.*;
 
+import com.odoomaster.ticketing.sales.payment.PaymentMethod;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -31,11 +33,13 @@ public class Order {
     @Column(name = "total_amount", nullable = false, precision = 14, scale = 0)
     private BigDecimal totalAmount;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String status;
+    private OrderStatus status;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "payment_method", length = 20)
-    private String paymentMethod;
+    private PaymentMethod paymentMethod;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -46,6 +50,6 @@ public class Order {
     @PrePersist
     void prePersist() {
         if (createdAt == null) createdAt = Instant.now();
-        if (status == null) status = "PENDING";
+        if (status == null) status = OrderStatus.PENDING;
     }
 }

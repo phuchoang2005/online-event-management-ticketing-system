@@ -28,8 +28,9 @@ public class CheckIn {
     @Column(name = "checked_in_at", nullable = false)
     private Instant checkedInAt;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String status;
+    private CheckInStatus status;
 
     @Column(name = "device_id", length = 64)
     private String deviceId;
@@ -37,6 +38,6 @@ public class CheckIn {
     @PrePersist
     void prePersist() {
         if (checkedInAt == null) checkedInAt = Instant.now();
-        if (status == null) status = "OK";
+        if (status == null) status = CheckInStatus.OK;
     }
 }

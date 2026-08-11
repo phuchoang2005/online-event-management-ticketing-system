@@ -3,6 +3,9 @@ package com.odoomaster.ticketing.sales.internal;
 import jakarta.persistence.*;
 import lombok.*;
 
+import com.odoomaster.ticketing.sales.payment.PaymentMethod;
+import com.odoomaster.ticketing.sales.payment.PaymentStatus;
+
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -21,8 +24,9 @@ public class Payment {
     @Column(name = "order_id", nullable = false)
     private Long orderId;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String provider;
+    private PaymentMethod provider;
 
     @Column(name = "transaction_id", length = 64)
     private String transactionId;
@@ -30,8 +34,9 @@ public class Payment {
     @Column(nullable = false, precision = 14, scale = 0)
     private BigDecimal amount;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String status;
+    private PaymentStatus status;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

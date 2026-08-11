@@ -29,13 +29,25 @@ public class TicketingReportingImpl implements TicketingReporting {
     return tickets.countByEventId(eventId);
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Anti-corruption boundary: an unrecognised status answers {@code 0} rather than throwing.
+   */
   @Override
   public long countTicketsByStatus(String status) {
-    return tickets.countByStatus(status);
+    return TicketStatus.parse(status).map(tickets::countByStatus).orElse(0L);
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Anti-corruption boundary: an unrecognised status answers {@code 0} rather than throwing.
+   */
   @Override
   public long countTicketsForEventByStatus(Long eventId, String status) {
-    return tickets.countByEventIdAndStatus(eventId, status);
+    return TicketStatus.parse(status)
+        .map(s -> tickets.countByEventIdAndStatus(eventId, s))
+        .orElse(0L);
   }
 }

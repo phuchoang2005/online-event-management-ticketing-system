@@ -3,6 +3,8 @@ import com.odoomaster.ticketing.feedback.FeedbackService;
 
 import com.odoomaster.ticketing.catalog.EventCatalog;
 import com.odoomaster.ticketing.feedback.internal.Feedback;
+import com.odoomaster.ticketing.feedback.internal.FeedbackCategory;
+import com.odoomaster.ticketing.feedback.internal.FeedbackStatus;
 import com.odoomaster.ticketing.feedback.FeedbackDtos.*;
 import com.odoomaster.ticketing.iam.UserDirectory;
 import com.odoomaster.ticketing.iam.UserDirectory.UserRef;
@@ -53,9 +55,9 @@ class FeedbackServiceTest {
         verify(feedbackRepo).save(cap.capture());
         Feedback saved = cap.getValue();
         assertThat(saved.getUserId()).isEqualTo(1L);
-        assertThat(saved.getCategory()).isEqualTo("GENERAL");
+        assertThat(saved.getCategory()).isEqualTo(FeedbackCategory.GENERAL);
         assertThat(saved.getSubject()).isEqualTo("Great app");
-        assertThat(saved.getStatus()).isEqualTo("NEW");
+        assertThat(saved.getStatus()).isEqualTo(FeedbackStatus.NEW);
         assertThat(saved.getRating()).isEqualTo(5);
         assertThat(view.id()).isEqualTo(42L);
         assertThat(view.userEmail()).isEqualTo("user@test.com");
@@ -107,20 +109,20 @@ class FeedbackServiceTest {
 
         ArgumentCaptor<Feedback> cap = ArgumentCaptor.forClass(Feedback.class);
         verify(feedbackRepo).save(cap.capture());
-        assertThat(cap.getValue().getCategory()).isEqualTo("GENERAL");
+        assertThat(cap.getValue().getCategory()).isEqualTo(FeedbackCategory.GENERAL);
     }
 
     // ── list ─────────────────────────────────────────────────────────────────
 
     @Test
     void list_delegatesToRepositoryWithNormalizedFilters() {
-        when(feedbackRepo.findAllFiltered(eq("NEW"), eq("BUG_REPORT"), any(Pageable.class)))
+        when(feedbackRepo.findAllFiltered(eq(FeedbackStatus.NEW), eq(FeedbackCategory.BUG_REPORT), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of()));
 
         FeedbackPage result = service.list(1, 10, "new", "bug_report");
 
         assertThat(result.data()).isEmpty();
-        verify(feedbackRepo).findAllFiltered(eq("NEW"), eq("BUG_REPORT"), any(Pageable.class));
+        verify(feedbackRepo).findAllFiltered(eq(FeedbackStatus.NEW), eq(FeedbackCategory.BUG_REPORT), any(Pageable.class));
     }
 
     @Test
@@ -137,28 +139,28 @@ class FeedbackServiceTest {
 
     @Test
     void updateStatus_toResolved_setsResolvedAt() {
-        Feedback fb = stubFeedback(7L, "NEW");
+        Feedback fb = stubFeedback(7L, FeedbackStatus.NEW);
         when(feedbackRepo.findById(7L)).thenReturn(Optional.of(fb));
         when(feedbackRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(userDirectory.find(anyLong())).thenReturn(Optional.empty());
 
         service.updateStatus(7L, new UpdateStatusRequest("RESOLVED", "handled"));
 
-        assertThat(fb.getStatus()).isEqualTo("RESOLVED");
+        assertThat(fb.getStatus()).isEqualTo(FeedbackStatus.RESOLVED);
         assertThat(fb.getResolvedAt()).isNotNull();
         assertThat(fb.getAdminNote()).isEqualTo("handled");
     }
 
     @Test
     void updateStatus_toRead_doesNotSetResolvedAt() {
-        Feedback fb = stubFeedback(8L, "NEW");
+        Feedback fb = stubFeedback(8L, FeedbackStatus.NEW);
         when(feedbackRepo.findById(8L)).thenReturn(Optional.of(fb));
         when(feedbackRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(userDirectory.find(anyLong())).thenReturn(Optional.empty());
 
         service.updateStatus(8L, new UpdateStatusRequest("READ", null));
 
-        assertThat(fb.getStatus()).isEqualTo("READ");
+        assertThat(fb.getStatus()).isEqualTo(FeedbackStatus.READ);
         assertThat(fb.getResolvedAt()).isNull();
     }
 
@@ -173,7 +175,7 @@ class FeedbackServiceTest {
 
     @Test
     void updateStatus_invalidStatus_throws() {
-        Feedback fb = stubFeedback(1L, "NEW");
+        Feedback fb = stubFeedback(1L, FeedbackStatus.NEW);
         when(feedbackRepo.findById(1L)).thenReturn(Optional.of(fb));
 
         assertThatThrownBy(() -> service.updateStatus(1L, new UpdateStatusRequest("DELETED", null)))
@@ -186,12 +188,12 @@ class FeedbackServiceTest {
     @Test
     void summary_returnsAggregatedCounts() {
         when(feedbackRepo.count()).thenReturn(10L);
-        when(feedbackRepo.countByStatus("NEW")).thenReturn(3L);
-        when(feedbackRepo.countByStatus("READ")).thenReturn(5L);
-        when(feedbackRepo.countByStatus("RESOLVED")).thenReturn(2L);
-        Feedback rated = stubFeedback(1L, "RESOLVED");
+        when(feedbackRepo.countByStatus(FeedbackStatus.NEW)).thenReturn(3L);
+        when(feedbackRepo.countByStatus(FeedbackStatus.READ)).thenReturn(5L);
+        when(feedbackRepo.countByStatus(FeedbackStatus.RESOLVED)).thenReturn(2L);
+        Feedback rated = stubFeedback(1L, FeedbackStatus.RESOLVED);
         rated.setRating(4);
-        when(feedbackRepo.findAll()).thenReturn(List.of(rated, stubFeedback(2L, "NEW")));
+        when(feedbackRepo.findAll()).thenReturn(List.of(rated, stubFeedback(2L, FeedbackStatus.NEW)));
 
         FeedbackSummary s = service.summary();
 
@@ -206,7 +208,7 @@ class FeedbackServiceTest {
     void summary_noRatings_avgRatingIsNull() {
         when(feedbackRepo.count()).thenReturn(1L);
         when(feedbackRepo.countByStatus(any())).thenReturn(0L);
-        when(feedbackRepo.findAll()).thenReturn(List.of(stubFeedback(1L, "NEW")));
+        when(feedbackRepo.findAll()).thenReturn(List.of(stubFeedback(1L, FeedbackStatus.NEW)));
 
         FeedbackSummary s = service.summary();
 
@@ -215,11 +217,11 @@ class FeedbackServiceTest {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private static Feedback stubFeedback(Long id, String status) {
+    private static Feedback stubFeedback(Long id, FeedbackStatus status) {
         Feedback f = new Feedback();
         f.setId(id);
         f.setUserId(1L);
-        f.setCategory("GENERAL");
+        f.setCategory(FeedbackCategory.GENERAL);
         f.setSubject("subject");
         f.setBody("body");
         f.setStatus(status);

@@ -34,7 +34,7 @@ public class TicketIssuanceImpl implements TicketIssuance {
           .eventId(order.eventId())
           .eventSeatId(line.eventSeatId())
           .qrCode(UUID.randomUUID().toString().replace("-", "").toUpperCase(Locale.ROOT))
-          .status("VALID")
+          .status(TicketStatus.VALID)
           .build();
       tickets.save(ticket);
       issued++;

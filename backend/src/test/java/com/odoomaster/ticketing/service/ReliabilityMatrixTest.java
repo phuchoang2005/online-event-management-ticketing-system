@@ -1,7 +1,9 @@
 package com.odoomaster.ticketing.service;
 
 import com.odoomaster.ticketing.catalog.internal.EventSeat;
+import com.odoomaster.ticketing.catalog.internal.SeatStatus;
 import com.odoomaster.ticketing.ticketing.internal.Ticket;
+import com.odoomaster.ticketing.ticketing.internal.TicketStatus;
 import com.odoomaster.ticketing.ticketing.TicketDtos.ScanRequest;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
@@ -35,15 +37,22 @@ class ReliabilityMatrixTest {
 
     @TestFactory
     Stream<DynamicTest> seatLockStateMatrix_matchesContentionRules() {
+        // Exhaustive over SeatStatus x {no lock, lapsed lock, live lock}. Before ADR-0013 this list
+        // was hand-written and included four statuses (BOOKED, HELD, CANCELLED, REFUND_PENDING) that
+        // no code path could ever produce; SeatStatus now makes the domain finite, so the matrix can
+        // cover all of it instead of guessing at it.
+        Instant lapsed = Instant.now().minusSeconds(60);
+        Instant live = Instant.now().plusSeconds(60);
         List<SeatCase> cases = List.of(
-                new SeatCase("AVAILABLE", null, true),
-                new SeatCase("LOCKED", Instant.now().minusSeconds(60), true),
-                new SeatCase("LOCKED", Instant.now().plusSeconds(60), false),
-                new SeatCase("SOLD", null, false),
-                new SeatCase("BOOKED", null, false),
-                new SeatCase("HELD", null, false),
-                new SeatCase("CANCELLED", null, false),
-                new SeatCase("REFUND_PENDING", null, false));
+                new SeatCase(SeatStatus.AVAILABLE, null, true),
+                new SeatCase(SeatStatus.AVAILABLE, lapsed, true),
+                new SeatCase(SeatStatus.AVAILABLE, live, true),
+                new SeatCase(SeatStatus.LOCKED, null, false),
+                new SeatCase(SeatStatus.LOCKED, lapsed, true),
+                new SeatCase(SeatStatus.LOCKED, live, false),
+                new SeatCase(SeatStatus.SOLD, null, false),
+                new SeatCase(SeatStatus.SOLD, lapsed, false),
+                new SeatCase(SeatStatus.SOLD, live, false));
 
         return IntStream.range(0, 12).boxed().flatMap(round -> cases.stream().map(c -> DynamicTest.dynamicTest(
                 "seat lock rule round " + round + " status " + c.status(),
@@ -84,15 +93,15 @@ class ReliabilityMatrixTest {
 
     @TestFactory
     Stream<DynamicTest> ticketStatusMatrix_identifiesScannableOnlyWhenValidAndUnused() {
+        // Exhaustive over TicketStatus x {no prior check-in, prior check-in}. As with the seat
+        // matrix, the previous hand-written list asserted on three statuses the system never writes.
         List<TicketCase> cases = List.of(
-                new TicketCase("VALID", false, true),
-                new TicketCase("VALID", true, false),
-                new TicketCase("USED", false, false),
-                new TicketCase("USED", true, false),
-                new TicketCase("CANCELLED", false, false),
-                new TicketCase("REFUNDED", false, false),
-                new TicketCase("PENDING", false, false),
-                new TicketCase("EXPIRED", false, false));
+                new TicketCase(TicketStatus.VALID, false, true),
+                new TicketCase(TicketStatus.VALID, true, false),
+                new TicketCase(TicketStatus.USED, false, false),
+                new TicketCase(TicketStatus.USED, true, false),
+                new TicketCase(TicketStatus.CANCELLED, false, false),
+                new TicketCase(TicketStatus.CANCELLED, true, false));
 
         return IntStream.range(0, 16).boxed().flatMap(round -> cases.stream().map(c -> DynamicTest.dynamicTest(
                 "ticket scannable round " + round + " " + c.status() + " existing=" + c.existingCheckIn(),
@@ -105,7 +114,8 @@ class ReliabilityMatrixTest {
 
     private static boolean isLockableForNewOrder(EventSeat seat, Instant now) {
         boolean lockExpired = seat.getLockedUntil() != null && seat.getLockedUntil().isBefore(now);
-        return "AVAILABLE".equals(seat.getStatus()) || ("LOCKED".equals(seat.getStatus()) && lockExpired);
+        return seat.getStatus() == SeatStatus.AVAILABLE
+                || (seat.getStatus() == SeatStatus.LOCKED && lockExpired);
     }
 
     private static boolean isMissingQr(ScanRequest req) {
@@ -117,10 +127,10 @@ class ReliabilityMatrixTest {
     }
 
     private static boolean isScannable(Ticket ticket, boolean existingCheckIn) {
-        return "VALID".equals(ticket.getStatus()) && !existingCheckIn;
+        return ticket.getStatus() == TicketStatus.VALID && !existingCheckIn;
     }
 
-    private static EventSeat seat(Long id, String status, Instant lockedUntil) {
+    private static EventSeat seat(Long id, SeatStatus status, Instant lockedUntil) {
         EventSeat seat = new EventSeat();
         seat.setId(id);
         seat.setEventId(1L);
@@ -135,7 +145,7 @@ class ReliabilityMatrixTest {
         return seat;
     }
 
-    private record SeatCase(String status, Instant lockedUntil, boolean lockable) {}
+    private record SeatCase(SeatStatus status, Instant lockedUntil, boolean lockable) {}
 
-    private record TicketCase(String status, boolean existingCheckIn, boolean scannable) {}
+    private record TicketCase(TicketStatus status, boolean existingCheckIn, boolean scannable) {}
 }
