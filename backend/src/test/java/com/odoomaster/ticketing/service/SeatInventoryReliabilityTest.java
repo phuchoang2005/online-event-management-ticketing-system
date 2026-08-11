@@ -1,5 +1,6 @@
 package com.odoomaster.ticketing.service;
 
+import com.odoomaster.ticketing.catalog.internal.CatalogFixtures;
 import com.odoomaster.ticketing.catalog.internal.EventSeat;
 import com.odoomaster.ticketing.catalog.internal.SeatStatus;
 import com.odoomaster.ticketing.catalog.internal.EventSeatRepository;
@@ -8,6 +9,7 @@ import com.odoomaster.ticketing.catalog.SeatInventory.SeatDetail;
 import com.odoomaster.ticketing.catalog.internal.CacheConfig;
 import com.odoomaster.ticketing.catalog.internal.SeatInventoryImpl;
 import com.odoomaster.ticketing.shared.AppException;
+import com.odoomaster.ticketing.shared.DomainException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,6 +22,7 @@ import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 
@@ -48,7 +51,7 @@ class SeatInventoryReliabilityTest {
 
     @BeforeEach
     void setUp() {
-        inventory = new SeatInventoryImpl(seats, cacheManager);
+        inventory = new SeatInventoryImpl(seats, cacheManager, Clock.systemUTC());
     }
 
     @Test
@@ -60,8 +63,8 @@ class SeatInventoryReliabilityTest {
         List<SeatDetail> details = inventory.lockSeats(1L, 5L, List.of(10L, 11L));
 
         assertThat(a1.getStatus()).isEqualTo(SeatStatus.LOCKED);
-        assertThat(a1.getLockedBy()).isEqualTo(5L);
-        assertThat(a1.getLockedUntil()).isAfter(Instant.now());
+        assertThat(a1.lockedBy()).isEqualTo(5L);
+        assertThat(a1.lockedUntil()).isAfter(Instant.now());
         assertThat(a2.getStatus()).isEqualTo(SeatStatus.LOCKED);
         verify(seats).saveAll(List.of(a1, a2));
         assertThat(details).extracting(SeatDetail::id).containsExactly(10L, 11L);
@@ -71,27 +74,25 @@ class SeatInventoryReliabilityTest {
 
     @Test
     void lockSeats_givenExpiredLock_relocksForCurrentBuyer() {
-        EventSeat s = seat(10L, SeatStatus.LOCKED, BigDecimal.TEN);
-        s.setLockedBy(44L);
-        s.setLockedUntil(Instant.now().minusSeconds(1));
+        EventSeat s = seat(10L, 1L, SeatStatus.LOCKED, BigDecimal.TEN, 44L, Instant.now().minusSeconds(1));
         when(seats.findByIdIn(List.of(10L))).thenReturn(List.of(s));
 
         inventory.lockSeats(1L, 9L, List.of(10L));
 
         assertThat(s.getStatus()).isEqualTo(SeatStatus.LOCKED);
-        assertThat(s.getLockedBy()).isEqualTo(9L);
-        assertThat(s.getLockedUntil()).isAfter(Instant.now());
+        assertThat(s.lockedBy()).isEqualTo(9L);
+        assertThat(s.lockedUntil()).isAfter(Instant.now());
     }
 
     @ParameterizedTest
     @EnumSource(value = SeatStatus.class, names = {"SOLD", "LOCKED"})
     void lockSeats_givenUnavailableSeat_rejectsContention(SeatStatus status) {
-        EventSeat s = seat(10L, status, BigDecimal.TEN);
-        s.setLockedUntil(Instant.now().plusSeconds(60)); // live lock / non-available
+        // A live hold (or a sold seat) must reject a second buyer.
+        EventSeat s = seat(10L, 1L, status, BigDecimal.TEN, 44L, Instant.now().plusSeconds(60));
         when(seats.findByIdIn(List.of(10L))).thenReturn(List.of(s));
 
         assertThatThrownBy(() -> inventory.lockSeats(1L, 5L, List.of(10L)))
-                .isInstanceOf(AppException.class)
+                .isInstanceOf(DomainException.class)
                 .hasMessageContaining("no longer available");
         verify(seats, never()).saveAll(any());
     }
@@ -103,23 +104,22 @@ class SeatInventoryReliabilityTest {
 
         inventory.lockSeats(1L, 5L, List.of(10L)); // first buyer takes the hold
         assertThat(s.getStatus()).isEqualTo(SeatStatus.LOCKED);
-        assertThat(s.getLockedBy()).isEqualTo(5L);
+        assertThat(s.lockedBy()).isEqualTo(5L);
 
         // A second buyer contending for the same live-locked seat must be rejected.
         assertThatThrownBy(() -> inventory.lockSeats(1L, 9L, List.of(10L)))
-                .isInstanceOf(AppException.class)
+                .isInstanceOf(DomainException.class)
                 .hasMessageContaining("no longer available");
-        assertThat(s.getLockedBy()).isEqualTo(5L); // still held by the first buyer
+        assertThat(s.lockedBy()).isEqualTo(5L); // still held by the first buyer
     }
 
     @Test
     void lockSeats_givenSeatFromDifferentEvent_rejectsCrossEventLock() {
-        EventSeat s = seat(10L, SeatStatus.AVAILABLE, BigDecimal.TEN);
-        s.setEventId(2L);
+        EventSeat s = seat(10L, 2L, SeatStatus.AVAILABLE, BigDecimal.TEN, null, null);
         when(seats.findByIdIn(List.of(10L))).thenReturn(List.of(s));
 
         assertThatThrownBy(() -> inventory.lockSeats(1L, 5L, List.of(10L)))
-                .isInstanceOf(AppException.class)
+                .isInstanceOf(DomainException.class)
                 .hasMessageContaining("not in this event");
     }
 
@@ -153,16 +153,15 @@ class SeatInventoryReliabilityTest {
 
     @Test
     void markSold_givenLockedSeat_sellsAndClearsLock() {
-        EventSeat s = seat(10L, SeatStatus.LOCKED, BigDecimal.valueOf(120_000));
-        s.setLockedBy(5L);
-        s.setLockedUntil(Instant.now().plusSeconds(60));
+        EventSeat s = seat(10L, 1L, SeatStatus.LOCKED, BigDecimal.valueOf(120_000), 5L,
+                Instant.now().plusSeconds(60));
         when(seats.findByIdIn(List.of(10L))).thenReturn(List.of(s));
 
         inventory.markSold(1L, List.of(10L));
 
         assertThat(s.getStatus()).isEqualTo(SeatStatus.SOLD);
-        assertThat(s.getLockedBy()).isNull();
-        assertThat(s.getLockedUntil()).isNull();
+        assertThat(s.lockedBy()).isNull();
+        assertThat(s.lockedUntil()).isNull();
         verify(seats).saveAll(List.of(s));
     }
 
@@ -172,28 +171,25 @@ class SeatInventoryReliabilityTest {
             "LOCKED,Seat lock expired"
     })
     void markSold_givenSeatUnsellable_rejectsBeforeSelling(SeatStatus status, String message) {
-        EventSeat s = seat(10L, status, BigDecimal.TEN);
-        s.setLockedUntil(Instant.now().minusSeconds(5));
+        EventSeat s = seat(10L, 1L, status, BigDecimal.TEN, 5L, Instant.now().minusSeconds(5));
         when(seats.findByIdIn(List.of(10L))).thenReturn(List.of(s));
 
         assertThatThrownBy(() -> inventory.markSold(1L, List.of(10L)))
-                .isInstanceOf(AppException.class)
+                .isInstanceOf(DomainException.class)
                 .hasMessageContaining(message);
     }
 
     @Test
     void releaseLocks_releasesLockedSeatsAndLeavesOthersUntouched() {
-        EventSeat locked = seat(10L, SeatStatus.LOCKED, BigDecimal.TEN);
-        locked.setLockedBy(5L);
-        locked.setLockedUntil(Instant.now().plusSeconds(60));
+        EventSeat locked = seat(10L, 1L, SeatStatus.LOCKED, BigDecimal.TEN, 5L, Instant.now().plusSeconds(60));
         EventSeat sold = seat(11L, SeatStatus.SOLD, BigDecimal.TEN);
         when(seats.findByIdIn(List.of(10L, 11L))).thenReturn(List.of(locked, sold));
 
         inventory.releaseLocks(1L, List.of(10L, 11L));
 
         assertThat(locked.getStatus()).isEqualTo(SeatStatus.AVAILABLE);
-        assertThat(locked.getLockedBy()).isNull();
-        assertThat(locked.getLockedUntil()).isNull();
+        assertThat(locked.lockedBy()).isNull();
+        assertThat(locked.lockedUntil()).isNull();
         assertThat(sold.getStatus()).isEqualTo(SeatStatus.SOLD); // a sold seat is never reclaimed by cancel
         verify(seats).saveAll(List.of(locked, sold));
     }
@@ -201,16 +197,14 @@ class SeatInventoryReliabilityTest {
     @Test
     void releaseSold_reclaimsSoldSeatsAndLeavesOthersUntouched() {
         EventSeat sold = seat(10L, SeatStatus.SOLD, BigDecimal.TEN);
-        EventSeat locked = seat(11L, SeatStatus.LOCKED, BigDecimal.TEN);
-        locked.setLockedBy(5L);
-        locked.setLockedUntil(Instant.now().plusSeconds(60));
+        EventSeat locked = seat(11L, 1L, SeatStatus.LOCKED, BigDecimal.TEN, 5L, Instant.now().plusSeconds(60));
         when(seats.findByIdIn(List.of(10L, 11L))).thenReturn(List.of(sold, locked));
 
         inventory.releaseSold(1L, List.of(10L, 11L));
 
         assertThat(sold.getStatus()).isEqualTo(SeatStatus.AVAILABLE); // freed for resale on cancel/refund
-        assertThat(sold.getLockedBy()).isNull();
-        assertThat(sold.getLockedUntil()).isNull();
+        assertThat(sold.lockedBy()).isNull();
+        assertThat(sold.lockedUntil()).isNull();
         assertThat(locked.getStatus()).isEqualTo(SeatStatus.LOCKED); // only SOLD seats are reclaimed here
         verify(seats).saveAll(List.of(sold, locked));
     }
@@ -230,17 +224,13 @@ class SeatInventoryReliabilityTest {
     }
 
     private static EventSeat seat(Long id, SeatStatus status, BigDecimal price) {
-        EventSeat seat = new EventSeat();
-        seat.setId(id);
-        seat.setEventId(1L);
-        seat.setSeatId(id);
-        seat.setTicketTypeId(3L);
-        seat.setRowLabel("A");
-        seat.setSeatNumber(String.valueOf(id));
-        seat.setSection("MAIN");
-        seat.setPrice(price);
-        seat.setStatus(status);
-        seat.setVersion(0);
-        return seat;
+        return seat(id, 1L, status, price, null, null);
+    }
+
+    /** A seat optionally held by {@code lockedBy} until {@code lockedUntil} — contention/expiry cases. */
+    private static EventSeat seat(Long id, Long eventId, SeatStatus status, BigDecimal price,
+                                  Long lockedBy, Instant lockedUntil) {
+        return CatalogFixtures.seat(id, eventId, "MAIN", "A", String.valueOf(id), price, status,
+                lockedUntil == null ? null : CatalogFixtures.lock(lockedBy == null ? 5L : lockedBy, lockedUntil));
     }
 }

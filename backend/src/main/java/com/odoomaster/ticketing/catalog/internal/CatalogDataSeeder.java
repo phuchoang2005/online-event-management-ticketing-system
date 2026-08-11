@@ -359,16 +359,8 @@ public class CatalogDataSeeder implements CommandLineRunner {
           String rl = String.valueOf(rowLabel);
           String sn = String.format("%02d", n);
           var seat = catalog.ensureSeat(sectionRow.getId(), rl, sn);
-          toSave.add(EventSeat.builder()
-              .eventId(e.getId())
-              .seatId(seat.getId())
-              .ticketTypeId(tt.getId())
-              .section(sec.name)
-              .rowLabel(rl)
-              .seatNumber(sn)
-              .price(sec.price)
-              .status(SeatStatus.AVAILABLE)
-              .build());
+          toSave.add(EventSeat.create(e.getId(), seat.getId(), tt.getId(),
+              sec.name, rl, sn, sec.price));
         }
       }
     }

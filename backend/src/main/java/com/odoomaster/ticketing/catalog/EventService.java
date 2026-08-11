@@ -102,7 +102,7 @@ public class EventService {
         }
         var list = seats.findByEventIdOrderByRowLabelAscSeatNumberAsc(eventId).stream()
                 .map(s -> new SeatItem(s.getId(), s.getRowLabel(), s.getSeatNumber(), s.getSection(),
-                        s.getPrice(), s.getStatus().name(), s.getLockedUntil()))
+                        s.getPrice(), s.getStatus().name(), s.lockedUntil()))
                 .toList();
         return new SeatMap(eventId, list);
     }

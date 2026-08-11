@@ -213,9 +213,74 @@ the API contract or touching a single existing call site.
   such a bug, so `appException_keepsItsPinnedStatusRatherThanTheCatalogDefault` asserts the
   dispatch explicitly.
 
-## Sprint 3 — Seat aggregate; close the mutation back doors
+## Sprint 3 — Seat aggregate; close the mutation back doors ✅
 
-_Pending._
+Goal: make `EventSeat` the only code that can change a seat's state, without altering the
+transactional or caching guarantees the Golden Hour depends on.
+
+| # | Change | Status |
+|---|---|---|
+| 1 | New `catalog/internal/SeatLock` (`@Embeddable`) binding `lockedBy` + `lockedUntil` into one value. Maps onto the same two columns with no `@AttributeOverride` — schema-neutral | ✅ |
+| 2 | New `catalog/internal/LockPolicy(Duration ttl)` with `DEFAULT` = 10 minutes, replacing `SeatInventoryImpl.LOCK_TTL_MINUTES` | ✅ |
+| 3 | **`EventSeat` becomes the aggregate root.** `@Setter`/`@Builder` removed; `@NoArgsConstructor(PROTECTED)` for JPA + `@AllArgsConstructor(PACKAGE)` as the test seam. Public API: `create`, `requireBelongsTo`, `isLockableAt`, `lockFor`, `markSold`, `releaseHold`, `releaseSale`, `releaseExpiredLock`, `reprice`, `relabelSection`, `isSold`, `isLockExpiredAt`, `lockedBy`, `lockedUntil`, `label` | ✅ |
+| 4 | `SeatInventoryImpl` reduced from 161 to ~120 lines and now purely orchestrates: load → one aggregate call per seat → `saveAll` → evict. Takes the existing `Clock` bean so the aggregate never reads the clock | ✅ |
+| 5 | **Back door 1 closed:** `SeatLockSweeperJob` calls `EventSeat.releaseExpiredLock(now)` instead of writing `setStatus`, and re-checks expiry against the same instant — so a hold renewed between the query and the sweep is no longer yanked from its buyer | ✅ |
+| 6 | **Back door 2 closed:** `AdminEventService.updateSection` uses `relabelSection` + `reprice`, with an up-front check rejecting the whole request when a price change would touch a SOLD seat (bug (b)) | ✅ |
+| 7 | `EventSeat.builder()` in `AdminEventService` and `CatalogDataSeeder` → `EventSeat.create(...)`; `EventSeatRepository`'s expired-lock query navigates `s.lock.lockedUntil` | ✅ |
+| 8 | New `catalog/internal/CatalogFixtures` test seam; `SeatInventoryReliabilityTest`, `SeatLockSweeperJobTest`, `ReliabilityMatrixTest` and `AdminEventServiceReliabilityTest` migrated onto it | ✅ |
+| 9 | New pure-unit `EventSeatTest` (20) and `SeatLockAndPolicyTest` (7) — no Mockito, no Spring. `ReliabilityMatrixTest`'s seat matrix now calls the real `EventSeat.isLockableAt` | ✅ |
+| 10 | New `updateSection` regression tests (3) covering refuse-on-sold, rename-without-reprice, and reprice-when-unsold | ✅ |
+
+### Impact
+
+- **One writer.** `EventSeat` is now the only code in the system that can change a seat's status,
+  price or hold. The sweeper, the admin screens, the seeder and the ordering path all go through the
+  same checked transitions.
+- **Bug (b) fixed.** Repricing a SOLD seat is refused with `SEAT_SOLD_IMMUTABLE`. This was not
+  cosmetic: `sumSoldPriceForEvent` totals sold seats' prices, so an ordinary section edit silently
+  rewrote revenue that had already been collected and reported.
+- **A latent sweeper race closed as a by-product.** The old job trusted its query result and reset
+  every row it loaded. `releaseExpiredLock` re-checks expiry against the sweep's own instant, so a
+  hold taken or renewed in the window between query and write survives.
+- **`SeatLock` makes half-set holds unrepresentable** — `lockedBy` without `lockedUntil`, or the
+  reverse, no longer type-checks.
+- **The concurrency guarantees are byte-for-byte intact:** `@Transactional` on all four mutators,
+  `@Version` optimistic locking, `saveAll` before eviction, and all three cache evictions on every
+  mutation. `OrderService.pay()` remains a single transaction.
+- **Tests.** 778 → 788 (+10 net: +20 `EventSeatTest`, +7 `SeatLockAndPolicyTest`, +3 `updateSection`,
+  −20 from `SeatInventoryReliabilityTest` cases now covered more precisely at the aggregate level).
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `cd backend && mvn clean test` (JDK 21) | ✅ BUILD SUCCESS — 788 tests, 0 failures, 0 errors |
+| `ModularityTests` | ✅ green — `SeatLock`/`LockPolicy`/`CatalogFixtures` are all module-internal; the `catalog::inventory` facet is unchanged |
+| **Negative check** — reintroduce `s.setStatus(...)` / `s.setLockedUntil(null)` in `SeatLockSweeperJob` | ✅ now **fails to compile**: `cannot find symbol` ×2. The back door is not merely discouraged, it is unavailable |
+| **Negative check** — reprice a section containing a SOLD seat | ✅ `409 SEAT_SOLD_IMMUTABLE`, `saveAll` never called, nothing half-applied — pinned by `updateSection_givenSoldSeats_refusesToRewriteRealisedRevenue` |
+| `markSold` guard ordering (`SEAT_TAKEN` before `LOCK_EXPIRED`) | ✅ preserved — pinned by the existing `@CsvSource` and by `anAlreadySoldSeatReportsSeatTakenRatherThanLockExpired` |
+| DB schema | unchanged — the embeddable maps to the existing `locked_by` / `locked_until` columns, no migration |
+
+### Notes
+
+- **A no-op reprice is still a reprice.** The first cut called `reprice(req.price())` unconditionally
+  inside the rename loop, so renaming a section containing sold seats threw even when the price was
+  identical. Caught by `updateSection_givenSoldSeatsButNoPriceChange_stillRenames`. The service now
+  reprices only when the value actually moves — which is also why the up-front guard tests for a
+  *change* rather than for the mere presence of a price.
+- **The sweeper stayed out of the published facet.** Adding `releaseExpiredLocks()` to
+  `SeatInventory` would have handed every consumer a way to mass-release holds. The invariant that
+  matters is "only the aggregate mutates seat state", not "only the facet does", so the job remains
+  in `catalog.internal` and calls `EventSeat` directly. Zero facet change.
+- **`@Embedded` reads back as `null`, not as an all-null instance.** `EventSeat` therefore never
+  exposes the `lock` field; callers use `lockedBy()`, `lockedUntil()` and `isLockExpiredAt(now)`,
+  which null-check internally. The repository query navigates `s.lock.lockedUntil`.
+- **This is the first sprint whose mapping change `mvn test` genuinely cannot verify.** The
+  embeddable is schema-neutral by construction, but nothing in the suite boots Hibernate, so the
+  manual smoke gate — seat map, lock countdown, sweeper log line — is the real check here.
+- **`SeatInventoryImpl` gained a constructor parameter**, so its two test constructors were updated.
+  `SeatLockSweeperJobTest` moved off `@InjectMocks`: a mocked `Clock` hands the aggregate a null
+  instant, so the job is now built explicitly with `Clock.systemUTC()`.
 
 ## Sprint 4 — Order/Payment aggregates, `Money`, payment failure path
 

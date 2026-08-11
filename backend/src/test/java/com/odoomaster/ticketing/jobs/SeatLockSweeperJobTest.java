@@ -2,18 +2,20 @@ package com.odoomaster.ticketing.jobs;
 import com.odoomaster.ticketing.catalog.internal.SeatLockSweeperJob;
 
 import com.odoomaster.ticketing.catalog.internal.CacheConfig;
+import com.odoomaster.ticketing.catalog.internal.CatalogFixtures;
 import com.odoomaster.ticketing.catalog.internal.EventSeat;
 import com.odoomaster.ticketing.catalog.internal.SeatStatus;
 import com.odoomaster.ticketing.catalog.internal.EventSeatRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 
@@ -28,7 +30,17 @@ class SeatLockSweeperJobTest {
     @Mock CacheManager cacheManager;
     @Mock Cache seatsCache;
 
-    @InjectMocks SeatLockSweeperJob job;
+    /**
+     * Built explicitly rather than via {@code @InjectMocks}: the job now takes the application's
+     * {@link Clock} so {@link EventSeat#releaseExpiredLock} can re-check expiry against the same
+     * instant the query used, and a mocked {@code Clock} would hand the aggregate a null instant.
+     */
+    SeatLockSweeperJob job;
+
+    @BeforeEach
+    void setUp() {
+        job = new SeatLockSweeperJob(seatRepo, cacheManager, Clock.systemUTC());
+    }
 
     @Test
     void noExpiredLocks_doesNothing() {
@@ -50,8 +62,8 @@ class SeatLockSweeperJobTest {
         job.releaseExpiredLocks();
 
         assertThat(s1.getStatus()).isEqualTo(SeatStatus.AVAILABLE);
-        assertThat(s1.getLockedBy()).isNull();
-        assertThat(s1.getLockedUntil()).isNull();
+        assertThat(s1.lockedBy()).isNull();
+        assertThat(s1.lockedUntil()).isNull();
         assertThat(s2.getStatus()).isEqualTo(SeatStatus.AVAILABLE);
 
         @SuppressWarnings("unchecked")
@@ -87,13 +99,6 @@ class SeatLockSweeperJobTest {
     }
 
     private static EventSeat lockedSeat(Long id, Long eventId) {
-        EventSeat s = new EventSeat();
-        s.setId(id);
-        s.setEventId(eventId);
-        s.setStatus(SeatStatus.LOCKED);
-        s.setLockedBy(99L);
-        s.setLockedUntil(Instant.now().minusSeconds(60));
-        s.setVersion(0);
-        return s;
+        return CatalogFixtures.lockedSeat(id, eventId, 99L, Instant.now().minusSeconds(60));
     }
 }

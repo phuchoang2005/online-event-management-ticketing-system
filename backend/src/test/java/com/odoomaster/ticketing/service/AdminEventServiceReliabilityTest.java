@@ -1,7 +1,9 @@
 package com.odoomaster.ticketing.service;
 
+import com.odoomaster.ticketing.catalog.AdminDtos.SectionUpdateRequest;
 import com.odoomaster.ticketing.catalog.AdminEventService;
 import com.odoomaster.ticketing.catalog.SeatCatalogService;
+import com.odoomaster.ticketing.catalog.internal.CatalogFixtures;
 import com.odoomaster.ticketing.catalog.internal.Event;
 import com.odoomaster.ticketing.catalog.internal.EventCategoryRepository;
 import com.odoomaster.ticketing.catalog.internal.EventRepository;
@@ -111,27 +113,68 @@ class AdminEventServiceReliabilityTest {
         });
     }
 
+    // ── the seat-mutation back door ADR-0013 closed ─────────────────────────────────────
+
+    /**
+     * {@code sumSoldPriceForEvent} computes an event's realised revenue as the sum of its SOLD
+     * seats' prices, so before ADR-0013 an ordinary "rename this section and set its price" admin
+     * edit silently rewrote money that had already been collected and reported. The aggregate now
+     * refuses, and the service checks up front so a section is never half-repriced.
+     */
+    @Test
+    void updateSection_givenSoldSeats_refusesToRewriteRealisedRevenue() {
+        EventSeat sold = seat("MAIN", "A", "1", SeatStatus.SOLD);
+        EventSeat free = seat("MAIN", "A", "2", SeatStatus.AVAILABLE);
+        when(seats.findByEventIdAndSection(1L, "MAIN")).thenReturn(List.of(sold, free));
+
+        assertThatThrownBy(() -> service()
+                .updateSection(1L, "MAIN", new SectionUpdateRequest("PREMIUM", new BigDecimal("999"))))
+                .isInstanceOf(AppException.class)
+                .hasMessageContaining("already has sold seats")
+                .extracting("status").isEqualTo(HttpStatus.CONFLICT);
+
+        verify(seats, never()).saveAll(any());
+        assertThat(sold.getPrice()).isEqualByComparingTo("100000");
+        assertThat(free.getSection()).as("nothing is half-applied").isEqualTo("MAIN");
+    }
+
+    /** Renaming without a price change is still allowed, sold seats or not — a name is a label. */
+    @Test
+    void updateSection_givenSoldSeatsButNoPriceChange_stillRenames() {
+        EventSeat sold = seat("MAIN", "A", "1", SeatStatus.SOLD);
+        when(seats.findByEventIdAndSection(1L, "MAIN")).thenReturn(List.of(sold));
+        when(events.findById(1L)).thenReturn(Optional.of(event(EventStatus.DRAFT)));
+        when(seats.findByEventIdOrderByRowLabelAscSeatNumberAsc(1L)).thenReturn(List.of(sold));
+
+        service().updateSection(1L, "MAIN", new SectionUpdateRequest("PREMIUM", new BigDecimal("100000")));
+
+        assertThat(sold.getSection()).isEqualTo("PREMIUM");
+        assertThat(sold.getPrice()).isEqualByComparingTo("100000");
+        verify(seats).saveAll(List.of(sold));
+    }
+
+    @Test
+    void updateSection_givenNoSoldSeats_repricesTheWholeSection() {
+        EventSeat a = seat("MAIN", "A", "1", SeatStatus.AVAILABLE);
+        EventSeat b = seat("MAIN", "A", "2", SeatStatus.LOCKED);
+        when(seats.findByEventIdAndSection(1L, "MAIN")).thenReturn(List.of(a, b));
+        when(events.findById(1L)).thenReturn(Optional.of(event(EventStatus.DRAFT)));
+        when(seats.findByEventIdOrderByRowLabelAscSeatNumberAsc(1L)).thenReturn(List.of(a, b));
+
+        service().updateSection(1L, "MAIN", new SectionUpdateRequest("PREMIUM", new BigDecimal("250000")));
+
+        assertThat(a.getPrice()).isEqualByComparingTo("250000");
+        assertThat(b.getPrice()).as("a held seat may still be repriced; only a sale is final")
+                .isEqualByComparingTo("250000");
+        assertThat(a.getSection()).isEqualTo("PREMIUM");
+    }
+
     private static Event event(EventStatus status) {
-        Event e = new Event();
-        e.setId(1L);
-        e.setTitle("Concert");
-        e.setLocation("Main Hall");
-        e.setStartTime(Instant.now().plusSeconds(3600));
-        e.setEndTime(Instant.now().plusSeconds(7200));
-        e.setStatus(status);
-        return e;
+        return CatalogFixtures.event(1L, status);
     }
 
     private static EventSeat seat(String section, String row, String number, SeatStatus status) {
-        EventSeat s = new EventSeat();
-        s.setId((long) (section + row + number).hashCode());
-        s.setEventId(1L);
-        s.setSection(section);
-        s.setRowLabel(row);
-        s.setSeatNumber(number);
-        s.setPrice(new BigDecimal("100000"));
-        s.setStatus(status);
-        s.setVersion(0);
-        return s;
+        return CatalogFixtures.seat((long) (section + row + number).hashCode(), 1L,
+                section, row, number, new BigDecimal("100000"), status, null);
     }
 }

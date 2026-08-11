@@ -48,7 +48,7 @@ public interface EventSeatRepository extends JpaRepository<EventSeat, Long> {
   @Query("SELECT COUNT(s) FROM EventSeat s")
   long countAll();
 
-  @Query("SELECT s FROM EventSeat s WHERE s.status = :status AND s.lockedUntil < :now")
+  @Query("SELECT s FROM EventSeat s WHERE s.status = :status AND s.lock.lockedUntil < :now")
   List<EventSeat> findByStatusAndLockedUntilBefore(@Param("status") SeatStatus status, @Param("now") Instant now);
 
   /** Seats still marked LOCKED whose hold has lapsed — the sweeper's work queue. */

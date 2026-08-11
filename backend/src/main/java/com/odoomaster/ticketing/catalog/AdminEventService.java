@@ -214,16 +214,8 @@ public class AdminEventService {
                 String rl = String.valueOf(rowLabel);
                 String sn = String.format("%02d", n);
                 var seat = catalog.ensureSeat(section.getId(), rl, sn);
-                toSave.add(EventSeat.builder()
-                        .eventId(e.getId())
-                        .seatId(seat.getId())
-                        .ticketTypeId(tt.getId())
-                        .section(name)
-                        .rowLabel(rl)
-                        .seatNumber(sn)
-                        .price(req.price())
-                        .status(SeatStatus.AVAILABLE)
-                        .build());
+                toSave.add(EventSeat.create(e.getId(), seat.getId(), tt.getId(),
+                        name, rl, sn, req.price()));
             }
         }
         seats.saveAll(toSave);
@@ -243,9 +235,21 @@ public class AdminEventService {
                     "Section not found: " + section, HttpStatus.NOT_FOUND);
         }
         String newName = req.name().trim();
+        // Reject the whole request up front rather than repricing half a section and then throwing:
+        // a sold seat's price is realised revenue (sumSoldPriceForEvent), so it is immutable.
+        boolean repricing = current.stream().anyMatch(s -> s.getPrice().compareTo(req.price()) != 0);
+        if (repricing && current.stream().anyMatch(EventSeat::isSold)) {
+            throw new AppException("SEAT_SOLD_IMMUTABLE",
+                    "Cannot change the price of section " + section + ": it already has sold seats.",
+                    HttpStatus.CONFLICT);
+        }
         for (EventSeat s : current) {
-            s.setSection(newName);
-            s.setPrice(req.price());
+            s.relabelSection(newName);
+            // Only when the price actually moves: a no-op reprice on a sold seat is still a reprice,
+            // and renaming a section that happens to contain sold seats must stay allowed.
+            if (repricing) {
+                s.reprice(req.price());
+            }
         }
         seats.saveAll(current);
         return detail(eventId);

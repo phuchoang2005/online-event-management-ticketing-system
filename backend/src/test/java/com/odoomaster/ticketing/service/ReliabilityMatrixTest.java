@@ -1,5 +1,6 @@
 package com.odoomaster.ticketing.service;
 
+import com.odoomaster.ticketing.catalog.internal.CatalogFixtures;
 import com.odoomaster.ticketing.catalog.internal.EventSeat;
 import com.odoomaster.ticketing.catalog.internal.SeatStatus;
 import com.odoomaster.ticketing.ticketing.internal.Ticket;
@@ -58,7 +59,9 @@ class ReliabilityMatrixTest {
                 "seat lock rule round " + round + " status " + c.status(),
                 () -> {
                     EventSeat seat = seat(round.longValue(), c.status(), c.lockedUntil());
-                    assertThat(isLockableForNewOrder(seat, Instant.now())).isEqualTo(c.lockable());
+                    // Calls the real aggregate. Before ADR-0013 this matrix re-implemented the rule as a private
+                    // predicate, so all 96 of its assertions were self-fulfilling and verified no production code.
+                    assertThat(seat.isLockableAt(Instant.now())).isEqualTo(c.lockable());
                 })));
     }
 
@@ -112,12 +115,6 @@ class ReliabilityMatrixTest {
                 })));
     }
 
-    private static boolean isLockableForNewOrder(EventSeat seat, Instant now) {
-        boolean lockExpired = seat.getLockedUntil() != null && seat.getLockedUntil().isBefore(now);
-        return seat.getStatus() == SeatStatus.AVAILABLE
-                || (seat.getStatus() == SeatStatus.LOCKED && lockExpired);
-    }
-
     private static boolean isMissingQr(ScanRequest req) {
         return req == null || req.qrCode() == null || req.qrCode().isBlank();
     }
@@ -131,18 +128,8 @@ class ReliabilityMatrixTest {
     }
 
     private static EventSeat seat(Long id, SeatStatus status, Instant lockedUntil) {
-        EventSeat seat = new EventSeat();
-        seat.setId(id);
-        seat.setEventId(1L);
-        seat.setSeatId(id);
-        seat.setRowLabel("A");
-        seat.setSeatNumber(String.valueOf(id));
-        seat.setSection("MAIN");
-        seat.setPrice(BigDecimal.TEN);
-        seat.setStatus(status);
-        seat.setLockedUntil(lockedUntil);
-        seat.setVersion(0);
-        return seat;
+        return CatalogFixtures.seat(id, 1L, "MAIN", "A", String.valueOf(id), BigDecimal.TEN, status,
+                lockedUntil == null ? null : CatalogFixtures.lock(99L, lockedUntil));
     }
 
     private record SeatCase(SeatStatus status, Instant lockedUntil, boolean lockable) {}
