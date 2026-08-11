@@ -9,10 +9,12 @@ import com.odoomaster.ticketing.ticketing.TicketIssuance;
 import com.odoomaster.ticketing.ticketing.TicketIssuance.TicketLine;
 import com.odoomaster.ticketing.ticketing.TicketIssuance.TicketOrder;
 import com.odoomaster.ticketing.sales.OrderDtos.*;
+import com.odoomaster.ticketing.sales.internal.Money;
 import com.odoomaster.ticketing.sales.internal.Order;
 import com.odoomaster.ticketing.sales.internal.OrderStatus;
 import com.odoomaster.ticketing.sales.internal.OrderItem;
 import com.odoomaster.ticketing.sales.internal.Payment;
+import com.odoomaster.ticketing.sales.internal.PaymentRetryStatus;
 import com.odoomaster.ticketing.sales.internal.OrderRepository;
 import com.odoomaster.ticketing.sales.internal.OrderItemRepository;
 import com.odoomaster.ticketing.sales.internal.PaymentRepository;
@@ -28,7 +30,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.*;
 
@@ -56,23 +58,29 @@ public class OrderService {
     private final OrderItemRepository orderItems;
     private final PaymentRepository payments;
 
+    private final PaymentRetryService paymentRetries;
     private final PaymentGatewayResolver paymentGatewayResolver;
     private final ApplicationEventPublisher eventPublisher;
+    private final Clock clock;
 
     public OrderService(EventCatalog eventCatalog, SeatInventory seatInventory,
                         TicketIssuance ticketIssuance,
                         OrderRepository orders, OrderItemRepository orderItems,
                         PaymentRepository payments,
+                        PaymentRetryService paymentRetries,
                         PaymentGatewayResolver paymentGatewayResolver,
-                        ApplicationEventPublisher eventPublisher) {
+                        ApplicationEventPublisher eventPublisher,
+                        Clock clock) {
         this.eventCatalog = eventCatalog;
         this.seatInventory = seatInventory;
         this.ticketIssuance = ticketIssuance;
         this.orders = orders;
         this.orderItems = orderItems;
         this.payments = payments;
+        this.paymentRetries = paymentRetries;
         this.paymentGatewayResolver = paymentGatewayResolver;
         this.eventPublisher = eventPublisher;
+        this.clock = clock;
     }
 
     /**
@@ -104,26 +112,14 @@ public class OrderService {
         // returns their priced details.
         List<SeatDetail> picked = seatInventory.lockSeats(event.id(), userId, req.seatIds());
 
-        BigDecimal total = picked.stream()
-                .map(SeatDetail::price)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        Money total = Money.sum(picked.stream().map(SeatDetail::price).toList());
 
-        Order order = Order.builder()
-                .userId(userId)
-                .eventId(event.id())
-                .totalAmount(total)
-                .status(OrderStatus.PENDING)
-                .build();
+        Order order = Order.place(userId, event.id(), total, clock.instant());
         orders.save(order);
 
         List<OrderItem> items = new ArrayList<>();
         for (SeatDetail s : picked) {
-            items.add(OrderItem.builder()
-                    .orderId(order.getId())
-                    .eventSeatId(s.id())
-                    .ticketTypeId(s.ticketTypeId())
-                    .price(s.price())
-                    .build());
+            items.add(OrderItem.forSeat(order.getId(), s.id(), s.ticketTypeId(), Money.of(s.price())));
         }
         orderItems.saveAll(items);
 
@@ -150,14 +146,17 @@ public class OrderService {
     public OrderView pay(Long userId, Long orderId, PayRequest req) {
         Order order = orders.findById(orderId)
                 .orElseThrow(() -> new AppException("ORDER_NOT_FOUND", "Order not found.", HttpStatus.NOT_FOUND));
-        if (!Objects.equals(order.getUserId(), userId)) {
+        if (!order.isOwnedBy(userId)) {
             throw new AppException("FORBIDDEN", "Order does not belong to current user.", HttpStatus.FORBIDDEN);
         }
-        if (order.getStatus() == OrderStatus.PAID) {
+        // Idempotent re-pay: return the existing view without re-charging or re-issuing tickets.
+        // Order.pay() is idempotent too, but the aggregate cannot suppress the side effects below.
+        if (order.isPaid()) {
             return view(order);
         }
-        if (order.getStatus() != OrderStatus.PENDING) {
-            throw new AppException("ORDER_STATE_INVALID", "Order cannot be paid in state " + order.getStatus(), HttpStatus.CONFLICT);
+        if (!order.isPayable()) {
+            throw new AppException("ORDER_STATE_INVALID",
+                    "Order cannot be paid in state " + order.getStatus(), HttpStatus.CONFLICT);
         }
 
         // The wire contract keeps `method` a String (see PaymentMethod's javadoc); parse it here so a
@@ -172,22 +171,24 @@ public class OrderService {
         // Catalog re-checks the seats and transitions them to SOLD (clearing locks, evicting caches).
         seatInventory.markSold(order.getEventId(), seatIds);
 
-        // Charge via the resolved payment gateway (Strategy). The mock gateway always succeeds.
+        // Charge via the resolved payment gateway (Strategy). The mock gateway always succeeds, but
+        // the decline branch below is real: before ADR-0013 PaymentResult.success() was never read,
+        // so a declined charge still marked the order PAID and issued tickets.
+        Instant now = clock.instant();
         PaymentGateway gateway = paymentGatewayResolver.resolve(method);
         PaymentResult result = gateway.charge(new PaymentRequest(order.getId(), method, order.getTotalAmount()));
-        Payment p = Payment.builder()
-                .orderId(order.getId())
-                .provider(method)
-                .transactionId(result.transactionId())
-                .amount(order.getTotalAmount())
-                .status(result.status())
-                .build();
-        payments.save(p);
+        Payment payment = payments.save(Payment.record(order.getId(), method, result.transactionId(),
+                order.total(), result.status(), now));
 
-        Instant now = Instant.now();
-        order.setStatus(OrderStatus.PAID);
-        order.setPaymentMethod(method);
-        order.setPaidAt(now);
+        if (!result.success()) {
+            // Record the attempt for the funnel, then abort. Throwing rolls back the whole
+            // transaction — including the markSold above — so the seats return to their held state.
+            paymentRetries.recordAttempt(payment.getId(), PaymentRetryStatus.FAILED, result.errorCode());
+            throw new AppException("PAYMENT_FAILED",
+                    "Payment was declined by " + method + ".", HttpStatus.PAYMENT_REQUIRED);
+        }
+
+        order.pay(method, now);
         orders.save(order);
 
         // Ticketing issues one VALID QR ticket per line, within this transaction.
@@ -209,20 +210,18 @@ public class OrderService {
     public void cancel(Long userId, Long orderId) {
         Order order = orders.findById(orderId)
                 .orElseThrow(() -> new AppException("ORDER_NOT_FOUND", "Order not found.", HttpStatus.NOT_FOUND));
-        if (!Objects.equals(order.getUserId(), userId)) {
+        if (!order.isOwnedBy(userId)) {
             throw new AppException("FORBIDDEN", "Order does not belong to current user.", HttpStatus.FORBIDDEN);
-        }
-        if (order.getStatus() == OrderStatus.PAID) {
-            throw new AppException("ORDER_ALREADY_PAID", "Cannot cancel a paid order.", HttpStatus.CONFLICT);
         }
         if (order.getStatus() == OrderStatus.CANCELLED) return;
 
         List<OrderItem> items = orderItems.findByOrderId(order.getId());
         List<Long> seatIds = items.stream().map(OrderItem::getEventSeatId).toList();
+        // The aggregate refuses to cancel a paid order; do that before touching the inventory.
+        order.cancel();
         // Catalog releases any still-LOCKED seats back to AVAILABLE (and evicts caches).
         seatInventory.releaseLocks(order.getEventId(), seatIds);
         orderItems.deleteAll(items);
-        order.setStatus(OrderStatus.CANCELLED);
         orders.save(order);
     }
 
@@ -235,7 +234,7 @@ public class OrderService {
     public OrderView getMine(Long userId, Long orderId) {
         Order o = orders.findById(orderId)
                 .orElseThrow(() -> new AppException("ORDER_NOT_FOUND", "Order not found.", HttpStatus.NOT_FOUND));
-        if (!Objects.equals(o.getUserId(), userId)) {
+        if (!o.isOwnedBy(userId)) {
             throw new AppException("FORBIDDEN", "Order does not belong to current user.", HttpStatus.FORBIDDEN);
         }
         return view(o);

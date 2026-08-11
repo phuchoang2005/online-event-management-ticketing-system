@@ -2,6 +2,8 @@ package com.odoomaster.ticketing.service;
 import com.odoomaster.ticketing.sales.PaymentRetryService;
 
 import com.odoomaster.ticketing.sales.internal.PaymentRetry;
+
+import java.time.Clock;
 import com.odoomaster.ticketing.sales.internal.PaymentRetryStatus;
 import com.odoomaster.ticketing.sales.internal.PaymentRetryRepository;
 import org.junit.jupiter.api.Test;
@@ -36,7 +38,7 @@ class PaymentRetryServiceReliabilityTest {
             "9,FAILED,RATE_LIMITED,10"
     })
     void recordAttempt_givenExistingAttempts_incrementsAttemptNumber(long existing, PaymentRetryStatus status, String errorCode, int expected) {
-        PaymentRetryService service = new PaymentRetryService(retries);
+        PaymentRetryService service = new PaymentRetryService(retries, Clock.systemUTC());
         when(retries.countByPaymentId(7L)).thenReturn(existing);
         when(retries.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -50,7 +52,7 @@ class PaymentRetryServiceReliabilityTest {
 
     @Test
     void recordAttempt_capturesSavedRetryPayload() {
-        PaymentRetryService service = new PaymentRetryService(retries);
+        PaymentRetryService service = new PaymentRetryService(retries, Clock.systemUTC());
         when(retries.countByPaymentId(7L)).thenReturn(4L);
         when(retries.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -64,7 +66,7 @@ class PaymentRetryServiceReliabilityTest {
 
     @Test
     void recordAttempt_concurrentRepositoryCounts_producesDistinctAttemptsWhenStoreIsAtomic() throws Exception {
-        PaymentRetryService service = new PaymentRetryService(retries);
+        PaymentRetryService service = new PaymentRetryService(retries, Clock.systemUTC());
         AtomicLong count = new AtomicLong();
         var attempts = ConcurrentHashMap.<Integer>newKeySet();
         CountDownLatch start = new CountDownLatch(1);

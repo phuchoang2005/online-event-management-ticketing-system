@@ -247,14 +247,13 @@ transactional or caching guarantees the Golden Hour depends on.
 - **The concurrency guarantees are byte-for-byte intact:** `@Transactional` on all four mutators,
   `@Version` optimistic locking, `saveAll` before eviction, and all three cache evictions on every
   mutation. `OrderService.pay()` remains a single transaction.
-- **Tests.** 778 → 788 (+10 net: +20 `EventSeatTest`, +7 `SeatLockAndPolicyTest`, +3 `updateSection`,
-  −20 from `SeatInventoryReliabilityTest` cases now covered more precisely at the aggregate level).
+- **Tests.** 778 → 806 (+28: +18 `EventSeatTest`, +7 `SeatLockAndPolicyTest`, +3 `updateSection`).
 
 ### Verification
 
 | Check | Result |
 |---|---|
-| `cd backend && mvn clean test` (JDK 21) | ✅ BUILD SUCCESS — 788 tests, 0 failures, 0 errors |
+| `cd backend && mvn clean test` (JDK 21) | ✅ BUILD SUCCESS — 806 tests, 0 failures, 0 errors |
 | `ModularityTests` | ✅ green — `SeatLock`/`LockPolicy`/`CatalogFixtures` are all module-internal; the `catalog::inventory` facet is unchanged |
 | **Negative check** — reintroduce `s.setStatus(...)` / `s.setLockedUntil(null)` in `SeatLockSweeperJob` | ✅ now **fails to compile**: `cannot find symbol` ×2. The back door is not merely discouraged, it is unavailable |
 | **Negative check** — reprice a section containing a SOLD seat | ✅ `409 SEAT_SOLD_IMMUTABLE`, `saveAll` never called, nothing half-applied — pinned by `updateSection_givenSoldSeats_refusesToRewriteRealisedRevenue` |
@@ -282,9 +281,73 @@ transactional or caching guarantees the Golden Hour depends on.
   `SeatLockSweeperJobTest` moved off `@InjectMocks`: a mocked `Clock` hands the aggregate a null
   instant, so the job is now built explicitly with `Clock.systemUTC()`.
 
-## Sprint 4 — Order/Payment aggregates, `Money`, payment failure path
+## Sprint 4 — Order/Payment aggregates, `Money`, payment failure path ✅
 
-_Pending._
+Goal: give the order lifecycle an owner, give the arithmetic a type, and make a declined payment
+actually fail.
+
+| # | Change | Status |
+|---|---|---|
+| 1 | New `sales/internal/Money` — `zero/of/sum/plus/isZero`, rejects negatives at construction, equality by amount rather than by scale. **Domain-only**: the columns stay `BigDecimal` so the four `SUM(o.totalAmount)` queries keep working | ✅ |
+| 2 | `Order` becomes an aggregate root: `place`, `pay`, `cancel`, `isOwnedBy`, `isPayable`, `isPaid`, `total()`. Setters and builder removed | ✅ |
+| 3 | `OrderItem.forSeat(...)` + `amount()`; `Payment.record(...)` + `isSucceeded()`; `PaymentRetry.attempt(...)` + `static nextAttemptNo(long)`. All three lose their setters and builders | ✅ |
+| 4 | `OrderService` delegates ownership and state to the aggregate, totals with `Money.sum(...)`, and takes the `Clock` bean instead of calling `Instant.now()` | ✅ |
+| 5 | **Bugs (a) part 2 and (c): the payment failure path is wired.** `OrderService.pay` now reads `PaymentResult.success()`; on a decline it records the payment row, appends a `PaymentRetry` and throws `PAYMENT_FAILED` (402), rolling the transaction back | ✅ |
+| 6 | `PaymentRetryService.recordAttempt` gains its first caller in the system's history, takes a typed `PaymentRetryStatus`, and stamps `attemptedAt` from the `Clock` | ✅ |
+| 7 | New `sales/internal/SalesFixtures` test seam, including `withId(...)` which stamps a generated key the way Hibernate does — by reflection, rather than reopening the aggregate with a `setId` | ✅ |
+| 8 | New pure-unit `OrderAggregateTest` (17) covering `Money`, the order lifecycle, payment records and retry numbering; new `pay_givenDeclinedCharge_recordsARetryAndIssuesNoTickets` | ✅ |
+
+### Impact
+
+- **A declined payment can no longer mint tickets.** `PaymentResult.success()` had existed and gone
+  unread since the field was written, so the only reason no customer ever got free tickets is that
+  `MockPaymentGateway` never declines. The branch is now real and tested against a declining gateway.
+- **The payment funnel can move.** Declines are persisted as `PaymentStatus.FAILED` rows, so
+  `AnalyticsService`'s `countPaymentsByStatus("FAILED")` — which structurally could only ever return
+  0 — has something to count. Combined with Sprint 1's lenient parsing, bug (a) is fully closed.
+- **`PaymentRetry` stops being dead infrastructure.** Table, entity and service existed with zero
+  callers; `recordAttempt` is now invoked on every decline.
+- **Order state has one owner.** `isPayable`/`isPaid`/`cancel` replaced `if/else` chains that
+  answered the same question in three places.
+- **`Money` gives the arithmetic a home** without touching a column. It also fixes a latent trap:
+  `BigDecimal.equals` distinguishes `100` from `100.00`, `Money.equals` does not.
+- **Tests.** 806 → 824 (+18: +17 `OrderAggregateTest`, +1 payment-decline regression).
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `cd backend && mvn clean test` (JDK 21) | ✅ BUILD SUCCESS — **824 tests**, 0 failures, 0 errors |
+| `ModularityTests` | ✅ green — `Money`, `SalesFixtures` and the aggregates are all module-internal; `sales::reporting` unchanged |
+| Declined charge | ✅ `402 PAYMENT_FAILED`, a `FAILED` payment row, one `PaymentRetry`, **no** ticket issuance, **no** notification, order left `PENDING` — pinned by `pay_givenDeclinedCharge_recordsARetryAndIssuesNoTickets` |
+| Idempotent re-pay | ✅ preserved at both levels — `OrderService` returns early on `isPaid()`, and `Order.pay` is itself a no-op when already paid |
+| `OrderService.pay()` remains a single transaction | ✅ unchanged — no propagation attribute was touched |
+| DB schema / wire format | unchanged |
+
+### Notes
+
+- **Two behaviours changed shape, not outcome.** `Order.cancel()` on a paid order and
+  `Order.pay()` in a terminal state now raise `DomainException` rather than `AppException`. Both
+  codes (`ORDER_ALREADY_PAID`, `ORDER_STATE_INVALID`) are unregistered in `ErrorCatalog` and so still
+  render **409** — the client sees no difference. One test assertion moved from `AppException` to
+  `DomainException` to say so explicitly.
+- **`PAYMENT_FAILED` is deliberately `402 Payment Required`**, not the 409 default, so it is
+  registered on the `AppException` at the throw site rather than in `ErrorCatalog`. A decline is not
+  a state conflict; the client should offer another method.
+- **`MockPaymentGateway` still always succeeds.** The decline path is exercised by a test-local
+  `DecliningGateway`. Injecting randomness into the mock would make the whole suite flaky in exchange
+  for nothing — the branch is what needed to exist, not a dice roll.
+- **`SalesFixtures.withId` uses reflection on purpose.** Several tests stub `repository.save(...)` to
+  mimic the database assigning a key to the instance the service still holds. Adding a
+  production-visible `setId` to satisfy a mock would reopen the aggregate to exactly the arbitrary
+  mutation this refactor closed off; identity assignment is the persistence layer's job, so the test
+  seam does what Hibernate does.
+- **Correction to the Sprint 3 figures recorded above.** The per-sprint totals were being read with a
+  script that summed one line per surefire report file, which silently skips `@Nested` classes.
+  Maven's own `Results:` line is authoritative. Sprint 3's true total was **806**, not the 788 first
+  recorded (`EventSeatTest` contributes 18 tests, all of which did run); the Impact and Verification
+  rows in Sprint 3 have been corrected in place. Sprints 0–2 are unaffected — they had no nested test
+  classes — so the 727 → 758 → 778 progression stands.
 
 ## Sprint 5 — Remaining aggregates, `QrCode`, docs closeout
 
