@@ -22,7 +22,7 @@ outside it.
 
 | Facet | Types |
 |---|---|
-| `shared::errors` | `AppException`, `ApiErrorEnvelope` (+ `ErrorBody`, `FieldDetail`) |
+| `shared::errors` | `DomainException`, `AppException`, `ApiErrorEnvelope` (+ `ErrorBody`, `FieldDetail`) |
 | `shared::security` | `AuthPrincipal`, `CurrentUser` |
 | `shared::audit` | `Auditable` |
 | `shared::contracts` | `TicketsIssuedEvent`, `EventDeletedEvent` |

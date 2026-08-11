@@ -60,7 +60,7 @@ The published API surface (the complete list — nothing else is reachable acros
 
 | Facet | Types |
 |---|---|
-| `shared::errors` | `AppException`, `ApiErrorEnvelope` (+ `ErrorBody`, `FieldDetail`) |
+| `shared::errors` | `DomainException`, `AppException`, `ApiErrorEnvelope` (+ `ErrorBody`, `FieldDetail`) |
 | `shared::security` | `AuthPrincipal`, `CurrentUser` |
 | `shared::audit` | `Auditable` |
 | `shared::contracts` | `TicketsIssuedEvent`, `EventDeletedEvent` |

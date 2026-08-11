@@ -162,9 +162,56 @@ database, with no Flyway migration.
 - **Deviation from the plan: 13 enums, not 15.** The plan's count double-counted; the vocabularies
   it enumerated map to 13 types. No vocabulary was dropped.
 
-## Sprint 2 — `DomainException` + `ErrorCatalog`
+## Sprint 2 — `DomainException` + `ErrorCatalog` ✅
 
-_Pending._
+Goal: give aggregates an exception they can throw without importing `HttpStatus`, without changing
+the API contract or touching a single existing call site.
+
+| # | Change | Status |
+|---|---|---|
+| 1 | New `shared/DomainException` (`@NamedInterface("errors")`) — a stable error `code` + message, **no HTTP status**. This is what an aggregate throws | ✅ |
+| 2 | `AppException` re-parented to extend it; its public signature `(code, message, status)` and both getters are byte-identical | ✅ |
+| 3 | New module-private `shared/ErrorCatalog` — a code → `HttpStatus` table extracted from all 32 existing `new AppException(...)` call sites, defaulting to **409 CONFLICT**. Deliberately *not* a named-interface type | ✅ |
+| 4 | `GlobalExceptionHandler` gains `@ExceptionHandler(DomainException.class)`; Spring's most-specific dispatch keeps `AppException` on the existing handler with its pinned status | ✅ |
+| 5 | Facet tables updated in `CLAUDE.md`, `architecture/modulith/README.md` and `adr/0012` (`shared::errors` gains one type); `shared/package-info.java` javadoc rewritten to distinguish the two exceptions and note that `ErrorCatalog` stays unpublished | ✅ |
+| 6 | New `shared/DomainErrorHandlingTest` (20 tests) pinning the subtype relationship, all 9 registered mappings, the 409 default, and that both handlers render the identical envelope | ✅ |
+
+### Impact
+
+- **Aggregates can now enforce invariants without knowing HTTP exists** — the precondition for
+  Sprints 3–5, where the state machines move into `EventSeat`, `Order` and `Ticket`.
+- **Zero changes outside `shared`.** All 32 `new AppException(code, msg, HttpStatus.X)` sites compile
+  untouched, and the existing `isInstanceOf(AppException.class)` and `.extracting("status")`
+  assertions in 8 test classes still pass — confirmed by the sprint needing **no test edits at all**.
+- **The 409 default is load-bearing, not a fallback.** Every aggregate-level rule this system has
+  (`SEAT_TAKEN`, `LOCK_EXPIRED`, `ORDER_STATE_INVALID`, `ORDER_ALREADY_PAID`, `TICKET_ALREADY_USED`)
+  already answers 409, so a new invariant is correct without anyone remembering to register it.
+- **Tests.** 758 → 778 (+20 `DomainErrorHandlingTest`).
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `cd backend && mvn clean test` (JDK 21) | ✅ BUILD SUCCESS — 778 tests, 0 failures, 0 errors |
+| Existing tests edited | ✅ **none** — the re-parenting is source-compatible by construction |
+| `ModularityTests` | ✅ green and **unchanged** — it asserts facet *names*, and `shared::errors` already existed; no `allowedDependencies` changed because all 6 consumers already declare it |
+| Rendered envelope for a bare `DomainException("SEAT_TAKEN", …)` | ✅ `409` + `{ error: { code: "SEAT_TAKEN", message, details: [], traceId } }` — pinned by `domainException_rendersTheStandardEnvelopeWithTheCatalogStatus` rather than a throwaway probe |
+| Behaviour / API / schema | unchanged |
+
+### Notes
+
+- **Subclassing rather than replacing was the whole point.** The alternative — making `AppException`
+  HTTP-free and routing every code through the table — touches 32 call sites and 3 test assertions
+  in the same change that moves the state machines. The table now exists and can absorb them
+  incrementally, one module at a time, whenever that is worth doing.
+- **`ErrorCatalog` is package-private on purpose.** It is how `shared` renders errors, not a contract
+  other modules consume. Publishing it would invite modules to reason about HTTP status codes, which
+  is exactly the coupling this sprint removes.
+- **The `handleApp` / `handleDomain` dispatch is worth a test, not a comment.** Now that
+  `AppException extends DomainException`, a single-handler mistake would silently reroute every
+  service exception through the catalog. `EVENT_NOT_FOUND` (catalog: 404, pinned: 404) would hide
+  such a bug, so `appException_keepsItsPinnedStatusRatherThanTheCatalogDefault` asserts the
+  dispatch explicitly.
 
 ## Sprint 3 — Seat aggregate; close the mutation back doors
 
