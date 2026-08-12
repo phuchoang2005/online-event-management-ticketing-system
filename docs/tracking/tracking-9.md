@@ -1,12 +1,14 @@
 # Tracking Sheet — Iteration 9
 
 > Date: 2026-08-11
-> Scope: tactical Domain-Driven Design **inside** the Modulith modules — typed
-> vocabularies (enums) replacing 87 status string literals, five value objects,
-> rich aggregates that own their own state transitions, and a domain exception
-> free of `HttpStatus`. Three latent defects are fixed as a by-product. The
-> module layout, the 10 published facets, the DB schema and the HTTP contract are
-> **unchanged**.
+> Scope: tactical Domain-Driven Design **inside** the Modulith modules — 13 typed
+> vocabularies (enums) replacing 87 status string literals, four value objects,
+> rich aggregates that own their own state transitions across all 14 entities, and
+> a domain exception free of `HttpStatus`. Three latent defects are fixed as a
+> by-product, plus three silent breaks the refactor itself surfaced. The module
+> layout, the 10 published facets, the DB schema and the HTTP contract are
+> **unchanged**; no Flyway migration was needed.
+> Result: **727 → 881 tests**, green at every sprint boundary.
 > Baseline: [`tracking-8.md`](./tracking-8.md) — **727 tests green** at `db4c77d`
 > (tracking-8 recorded 725; two were added after that sheet closed).
 > Plan of record: [`../../TACTICAL_DDD_REFACTOR_PLAN.md`](../../TACTICAL_DDD_REFACTOR_PLAN.md).
