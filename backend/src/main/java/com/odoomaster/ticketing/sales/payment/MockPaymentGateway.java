@@ -22,7 +22,7 @@ public class MockPaymentGateway implements PaymentGateway {
 
     /** {@inheritDoc} The mock supports any provider (it is the universal fallback). */
     @Override
-    public boolean supports(String provider) {
+    public boolean supports(PaymentMethod provider) {
         return true;
     }
 
@@ -30,6 +30,6 @@ public class MockPaymentGateway implements PaymentGateway {
     @Override
     public PaymentResult charge(PaymentRequest request) {
         String transactionId = "MOCK-" + UUID.randomUUID().toString().substring(0, 12).toUpperCase(Locale.ROOT);
-        return new PaymentResult(true, transactionId, "SUCCEEDED", request.provider());
+        return new PaymentResult(true, transactionId, PaymentStatus.SUCCEEDED, request.provider(), null);
     }
 }

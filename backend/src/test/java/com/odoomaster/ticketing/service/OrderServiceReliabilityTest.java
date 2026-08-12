@@ -8,11 +8,22 @@ import com.odoomaster.ticketing.catalog.SeatInventory;
 import com.odoomaster.ticketing.catalog.SeatInventory.SeatDetail;
 import com.odoomaster.ticketing.ticketing.TicketIssuance;
 import com.odoomaster.ticketing.ticketing.TicketIssuance.TicketOrder;
+import com.odoomaster.ticketing.sales.PaymentRetryService;
+import com.odoomaster.ticketing.sales.internal.Payment;
+import com.odoomaster.ticketing.sales.internal.PaymentRetryStatus;
+import com.odoomaster.ticketing.sales.payment.PaymentGateway;
+import com.odoomaster.ticketing.sales.payment.PaymentMethod;
+import com.odoomaster.ticketing.sales.payment.PaymentRequest;
+import com.odoomaster.ticketing.sales.payment.PaymentResult;
+import com.odoomaster.ticketing.sales.payment.PaymentStatus;
 import com.odoomaster.ticketing.sales.internal.Order;
+import com.odoomaster.ticketing.sales.internal.SalesFixtures;
+import com.odoomaster.ticketing.sales.internal.OrderStatus;
 import com.odoomaster.ticketing.sales.internal.OrderItem;
 import com.odoomaster.ticketing.sales.OrderDtos.CreateOrderRequest;
 import com.odoomaster.ticketing.sales.OrderDtos.PayRequest;
 import com.odoomaster.ticketing.shared.AppException;
+import com.odoomaster.ticketing.shared.DomainException;
 import com.odoomaster.ticketing.sales.internal.OrderItemRepository;
 import com.odoomaster.ticketing.sales.internal.OrderRepository;
 import com.odoomaster.ticketing.sales.internal.PaymentRepository;
@@ -26,12 +37,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +57,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -63,6 +77,7 @@ class OrderServiceReliabilityTest {
     @Mock OrderItemRepository orderItems;
     @Mock PaymentRepository payments;
     @Mock NotificationService notificationService;
+    @Mock PaymentRetryService paymentRetries;
 
     OrderService service;
 
@@ -76,7 +91,7 @@ class OrderServiceReliabilityTest {
         };
         PaymentGatewayResolver resolver = new PaymentGatewayResolver(List.of(new MockPaymentGateway()));
         service = new OrderService(eventCatalog, seatInventory, ticketIssuance,
-                orders, orderItems, payments, resolver, publisher);
+                orders, orderItems, payments, paymentRetries, resolver, publisher, Clock.systemUTC());
     }
 
     @Test
@@ -85,15 +100,12 @@ class OrderServiceReliabilityTest {
         when(seatInventory.lockSeats(1L, 5L, List.of(10L, 11L))).thenReturn(List.of(
                 seatDetail(10L, BigDecimal.valueOf(100_000)),
                 seatDetail(11L, BigDecimal.valueOf(150_000))));
-        when(orders.save(any())).thenAnswer(inv -> {
-            Order order = inv.getArgument(0);
-            order.setId(77L);
-            return order;
-        });
+        // Mimic the database assigning keys to the instances the service still holds.
+        when(orders.save(any())).thenAnswer(inv -> SalesFixtures.withId(inv.getArgument(0), 77L));
         when(orderItems.saveAll(anyList())).thenAnswer(inv -> {
             List<OrderItem> rows = inv.getArgument(0);
             long id = 1L;
-            for (OrderItem row : rows) row.setId(id++);
+            for (OrderItem row : rows) SalesFixtures.withId(row, id++);
             return rows;
         });
 
@@ -153,7 +165,7 @@ class OrderServiceReliabilityTest {
 
     @Test
     void pay_givenPendingOrder_marksSoldIssuesTicketsAndNotifies() {
-        Order order = order(20L, "PENDING", 5L);
+        Order order = order(20L, OrderStatus.PENDING, 5L);
         OrderItem item = item(30L, 10L);
         when(orders.findById(20L)).thenReturn(Optional.of(order));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of(item));
@@ -164,7 +176,7 @@ class OrderServiceReliabilityTest {
 
         service.pay(5L, 20L, new PayRequest("MOCK"));
 
-        assertThat(order.getStatus()).isEqualTo("PAID");
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PAID);
         assertThat(order.getPaidAt()).isNotNull();
         verify(seatInventory).markSold(1L, List.of(10L));
         verify(payments).save(any());
@@ -176,7 +188,7 @@ class OrderServiceReliabilityTest {
 
     @Test
     void pay_issuesOneTicketLinePerOrderItem() {
-        Order order = order(20L, "PENDING", 5L);
+        Order order = order(20L, OrderStatus.PENDING, 5L);
         when(orders.findById(20L)).thenReturn(Optional.of(order));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of(item(30L, 10L)));
         when(ticketIssuance.issueForOrder(any())).thenReturn(1);
@@ -198,23 +210,19 @@ class OrderServiceReliabilityTest {
     }
 
     @ParameterizedTest
-    @CsvSource({
-            "CANCELLED,Order cannot be paid",
-            "REFUND_PENDING,Order cannot be paid",
-            "EXPIRED,Order cannot be paid"
-    })
-    void pay_givenInvalidOrderState_rejectsPayment(String status, String message) {
+    @EnumSource(value = OrderStatus.class, names = {"CANCELLED", "REFUNDED"})
+    void pay_givenInvalidOrderState_rejectsPayment(OrderStatus status) {
         when(orders.findById(20L)).thenReturn(Optional.of(order(20L, status, 5L)));
 
         assertThatThrownBy(() -> service.pay(5L, 20L, new PayRequest("MOCK")))
                 .isInstanceOf(AppException.class)
-                .hasMessageContaining(message);
+                .hasMessageContaining("Order cannot be paid");
         verify(seatInventory, never()).markSold(anyLong(), anyList());
     }
 
     @Test
     void pay_givenAlreadyPaidOrder_isIdempotentAndDoesNotReissue() {
-        Order paid = order(20L, "PAID", 5L);
+        Order paid = order(20L, OrderStatus.PAID, 5L);
         when(orders.findById(20L)).thenReturn(Optional.of(paid));
         when(eventCatalog.find(1L)).thenReturn(Optional.of(summary("PUBLISHED")));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of());
@@ -229,7 +237,7 @@ class OrderServiceReliabilityTest {
 
     @Test
     void pay_givenSeatRejectedByInventory_doesNotChargeOrIssueTickets() {
-        Order order = order(20L, "PENDING", 5L);
+        Order order = order(20L, OrderStatus.PENDING, 5L);
         when(orders.findById(20L)).thenReturn(Optional.of(order));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of(item(30L, 10L)));
         when(seatInventory.markSold(1L, List.of(10L))).thenThrow(new AppException(
@@ -244,13 +252,13 @@ class OrderServiceReliabilityTest {
 
     @Test
     void cancel_givenPendingOrder_releasesSeatsAndDeletesItems() {
-        Order order = order(20L, "PENDING", 5L);
+        Order order = order(20L, OrderStatus.PENDING, 5L);
         when(orders.findById(20L)).thenReturn(Optional.of(order));
         when(orderItems.findByOrderId(20L)).thenReturn(List.of(item(30L, 10L)));
 
         service.cancel(5L, 20L);
 
-        assertThat(order.getStatus()).isEqualTo("CANCELLED");
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.CANCELLED);
         verify(seatInventory).releaseLocks(1L, List.of(10L));
         verify(orderItems).deleteAll(anyList());
     }
@@ -260,22 +268,74 @@ class OrderServiceReliabilityTest {
             "PAID,Cannot cancel a paid order",
             "CANCELLED,"
     })
-    void cancel_givenTerminalState_handlesSafely(String status, String message) {
+    void cancel_givenTerminalState_handlesSafely(OrderStatus status, String message) {
         when(orders.findById(20L)).thenReturn(Optional.of(order(20L, status, 5L)));
 
-        if ("CANCELLED".equals(status)) {
+        if (status == OrderStatus.CANCELLED) {
             service.cancel(5L, 20L);
             verify(seatInventory, never()).releaseLocks(anyLong(), anyList());
         } else {
+            // Thrown by the Order aggregate now, so it is a DomainException rather than an
+            // AppException. ORDER_ALREADY_PAID is unregistered in ErrorCatalog and so still renders
+            // 409 — DomainErrorHandlingTest pins that mapping; the client sees no change.
             assertThatThrownBy(() -> service.cancel(5L, 20L))
-                    .isInstanceOf(AppException.class)
+                    .isInstanceOf(DomainException.class)
                     .hasMessageContaining(message);
+        }
+    }
+
+    // ── the payment failure path ADR-0013 wired up (bugs (a) and (c)) ───────────────────
+
+    /**
+     * Before ADR-0013 {@code PaymentResult.success()} was never read, so a declined charge still
+     * marked the order PAID, issued QR tickets and notified the buyer. The gateway now decides.
+     */
+    @Test
+    void pay_givenDeclinedCharge_recordsARetryAndIssuesNoTickets() {
+        OrderService declining = orderServiceWith(new DecliningGateway());
+        Order order = order(20L, OrderStatus.PENDING, 5L);
+        when(orders.findById(20L)).thenReturn(Optional.of(order));
+        when(orderItems.findByOrderId(20L)).thenReturn(List.of(item(30L, 10L)));
+        when(payments.save(any())).thenAnswer(inv -> SalesFixtures.withId(inv.getArgument(0), 55L));
+
+        assertThatThrownBy(() -> declining.pay(5L, 20L, new PayRequest("MOCK")))
+                .isInstanceOf(AppException.class)
+                .hasMessageContaining("declined")
+                .extracting("status").isEqualTo(HttpStatus.PAYMENT_REQUIRED);
+
+        // The decline is recorded for the funnel...
+        ArgumentCaptor<Payment> saved = ArgumentCaptor.forClass(Payment.class);
+        verify(payments).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(PaymentStatus.FAILED);
+        verify(paymentRetries).recordAttempt(55L, PaymentRetryStatus.FAILED, "GATEWAY_DECLINED");
+
+        // ...and nothing downstream happened: no tickets, no notification, order left unpaid.
+        verify(ticketIssuance, never()).issueForOrder(any());
+        verifyNoInteractions(notificationService);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+    }
+
+    private OrderService orderServiceWith(PaymentGateway gateway) {
+        NotificationEventListener listener = new NotificationEventListener(notificationService);
+        ApplicationEventPublisher publisher = event -> {
+            if (event instanceof TicketsIssuedEvent e) listener.onTicketsIssued(e);
+        };
+        return new OrderService(eventCatalog, seatInventory, ticketIssuance,
+                orders, orderItems, payments, paymentRetries,
+                new PaymentGatewayResolver(List.of(gateway)), publisher, Clock.systemUTC());
+    }
+
+    /** A gateway that always declines — the mock provider deliberately never does. */
+    private static final class DecliningGateway implements PaymentGateway {
+        @Override public boolean supports(PaymentMethod provider) { return true; }
+        @Override public PaymentResult charge(PaymentRequest request) {
+            return new PaymentResult(false, null, PaymentStatus.FAILED, request.provider(), "GATEWAY_DECLINED");
         }
     }
 
     @Test
     void getMine_givenOrderOwnedByAnotherUser_rejectsAccess() {
-        when(orders.findById(20L)).thenReturn(Optional.of(order(20L, "PENDING", 99L)));
+        when(orders.findById(20L)).thenReturn(Optional.of(order(20L, OrderStatus.PENDING, 99L)));
 
         assertThatThrownBy(() -> service.getMine(5L, 20L))
                 .isInstanceOf(AppException.class)
@@ -286,7 +346,7 @@ class OrderServiceReliabilityTest {
     @Test
     void listMine_returnsOrdersInRepositoryOrder() {
         when(orders.findByUserIdOrderByCreatedAtDesc(5L))
-                .thenReturn(List.of(order(2L, "PENDING", 5L), order(1L, "PAID", 5L)));
+                .thenReturn(List.of(order(2L, OrderStatus.PENDING, 5L), order(1L, OrderStatus.PAID, 5L)));
         when(eventCatalog.find(1L)).thenReturn(Optional.of(summary("PUBLISHED")));
         when(orderItems.findByOrderId(anyLong())).thenReturn(List.of());
         when(seatInventory.findSeats(List.of())).thenReturn(List.of());
@@ -303,24 +363,11 @@ class OrderServiceReliabilityTest {
         return new SeatDetail(id, 3L, "A", String.valueOf(id), "MAIN", price, "LOCKED");
     }
 
-    private static Order order(Long id, String status, Long userId) {
-        Order order = new Order();
-        order.setId(id);
-        order.setUserId(userId);
-        order.setEventId(1L);
-        order.setTotalAmount(BigDecimal.TEN);
-        order.setStatus(status);
-        order.setCreatedAt(Instant.now());
-        return order;
+    private static Order order(Long id, OrderStatus status, Long userId) {
+        return SalesFixtures.order(id, status, userId);
     }
 
     private static OrderItem item(Long id, Long eventSeatId) {
-        OrderItem item = new OrderItem();
-        item.setId(id);
-        item.setOrderId(20L);
-        item.setEventSeatId(eventSeatId);
-        item.setTicketTypeId(3L);
-        item.setPrice(BigDecimal.TEN);
-        return item;
+        return SalesFixtures.orderItem(id, 20L, eventSeatId, BigDecimal.TEN);
     }
 }

@@ -1,6 +1,9 @@
 package com.odoomaster.ticketing.service;
 
 import com.odoomaster.ticketing.sales.internal.Order;
+import com.odoomaster.ticketing.sales.internal.OrderStatus;
+import com.odoomaster.ticketing.sales.internal.SalesFixtures;
+import com.odoomaster.ticketing.sales.payment.PaymentStatus;
 import com.odoomaster.ticketing.sales.internal.OrderItem;
 import com.odoomaster.ticketing.sales.internal.OrderItemRepository;
 import com.odoomaster.ticketing.sales.internal.OrderRepository;
@@ -25,6 +28,8 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.odoomaster.ticketing.ticketing.internal.TicketingFixtures;
+import com.odoomaster.ticketing.ticketing.internal.TicketStatus;
 
 /**
  * Covers the {@link EventDeletedEvent} cascade that replaced {@code AdminEventService}'s hand-written
@@ -43,10 +48,8 @@ class EventDeleteCascadeTest {
     void salesListener_purgesItemsThenPaymentsThenOrder_perOrder() {
         SalesEventCleanupListener listener = new SalesEventCleanupListener(orders, orderItems, payments);
         Order order = order(100L);
-        OrderItem item = new OrderItem();
-        item.setId(200L);
-        Payment payment = new Payment();
-        payment.setId(300L);
+        OrderItem item = SalesFixtures.orderItem(200L, 100L, 10L, java.math.BigDecimal.TEN);
+        Payment payment = SalesFixtures.payment(300L, 100L, PaymentStatus.SUCCEEDED, java.math.BigDecimal.TEN);
         when(orders.findByEventId(9L)).thenReturn(List.of(order));
         when(orderItems.findByOrderId(100L)).thenReturn(List.of(item));
         when(payments.findByOrderId(100L)).thenReturn(List.of(payment));
@@ -102,16 +105,10 @@ class EventDeleteCascadeTest {
     }
 
     private static Order order(Long id) {
-        Order o = new Order();
-        o.setId(id);
-        o.setEventId(9L);
-        return o;
+        return SalesFixtures.order(id, OrderStatus.PENDING, 5L, 9L, java.math.BigDecimal.TEN);
     }
 
     private static Ticket ticket(Long id) {
-        Ticket t = new Ticket();
-        t.setId(id);
-        t.setEventId(9L);
-        return t;
+        return TicketingFixtures.ticket(id, TicketStatus.VALID, 4L, 9L, 3L, "qr-" + id);
     }
 }

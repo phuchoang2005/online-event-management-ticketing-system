@@ -1,6 +1,11 @@
 package com.odoomaster.ticketing.catalog.internal;
 
 import jakarta.persistence.*;
+import java.util.Objects;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.*;
 
 /**
@@ -9,7 +14,9 @@ import lombok.*;
 @Entity
 @Table(name = "event_categories",
         uniqueConstraints = @UniqueConstraint(name = "uk_category_name", columnNames = "name"))
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor(access = AccessLevel.PACKAGE)
 public class EventCategory {
 
     @Id
@@ -18,4 +25,11 @@ public class EventCategory {
 
     @Column(nullable = false, length = 64)
     private String name;
+
+    /** Reference data: a factory, no lifecycle and nothing to transition. */
+    public static EventCategory named(String name) {
+        EventCategory category = new EventCategory();
+        category.name = Objects.requireNonNull(name, "name");
+        return category;
+    }
 }

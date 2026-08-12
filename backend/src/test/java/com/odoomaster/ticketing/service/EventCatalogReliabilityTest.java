@@ -1,6 +1,7 @@
 package com.odoomaster.ticketing.service;
 
 import com.odoomaster.ticketing.catalog.internal.Event;
+import com.odoomaster.ticketing.catalog.internal.EventStatus;
 import com.odoomaster.ticketing.catalog.EventCatalog;
 import com.odoomaster.ticketing.catalog.EventCatalog.EventSummary;
 import com.odoomaster.ticketing.catalog.internal.EventRepository;
@@ -11,7 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
+import com.odoomaster.ticketing.catalog.internal.CatalogFixtures;
 
 /**
  * Reliability tests for {@link EventCatalogImpl} — the "event on sale" guard that moved out of
@@ -43,7 +45,7 @@ class EventCatalogReliabilityTest {
 
     @Test
     void requireOnSale_givenPublishedEvent_returnsSummary() {
-        when(events.findById(1L)).thenReturn(Optional.of(event("PUBLISHED")));
+        when(events.findById(1L)).thenReturn(Optional.of(event(EventStatus.PUBLISHED)));
 
         EventSummary summary = catalog.requireOnSale(1L);
 
@@ -64,8 +66,8 @@ class EventCatalogReliabilityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"DRAFT", "CANCELLED", "ARCHIVED"})
-    void requireOnSale_givenEventNotPublished_rejectsSale(String status) {
+    @EnumSource(value = EventStatus.class, names = {"DRAFT", "CANCELLED", "COMPLETED"})
+    void requireOnSale_givenEventNotPublished_rejectsSale(EventStatus status) {
         when(events.findById(1L)).thenReturn(Optional.of(event(status)));
 
         assertThatThrownBy(() -> catalog.requireOnSale(1L))
@@ -76,7 +78,7 @@ class EventCatalogReliabilityTest {
 
     @Test
     void find_givenExistingEvent_returnsSummary() {
-        when(events.findById(1L)).thenReturn(Optional.of(event("PUBLISHED")));
+        when(events.findById(1L)).thenReturn(Optional.of(event(EventStatus.PUBLISHED)));
 
         assertThat(catalog.find(1L)).get()
                 .extracting(EventSummary::title).isEqualTo("Concert");
@@ -91,7 +93,7 @@ class EventCatalogReliabilityTest {
 
     @Test
     void listForReporting_mapsEventsToStatsProjection() {
-        when(events.findAllForAdmin()).thenReturn(List.of(event("PUBLISHED")));
+        when(events.findAllForAdmin()).thenReturn(List.of(event(EventStatus.PUBLISHED)));
 
         assertThat(catalog.listForReporting()).singleElement().satisfies(s -> {
             assertThat(s.id()).isEqualTo(1L);
@@ -104,7 +106,7 @@ class EventCatalogReliabilityTest {
     @Test
     void countAggregates_delegateToRepositories() {
         when(events.count()).thenReturn(60L);
-        when(events.countByStatus("PUBLISHED")).thenReturn(58L);
+        when(events.countByStatus(EventStatus.PUBLISHED)).thenReturn(58L);
         when(seats.countAll()).thenReturn(3659L);
         when(seats.countAllSold()).thenReturn(42L);
 
@@ -114,14 +116,7 @@ class EventCatalogReliabilityTest {
         assertThat(catalog.countSoldSeats()).isEqualTo(42L);
     }
 
-    private static Event event(String status) {
-        Event e = new Event();
-        e.setId(1L);
-        e.setTitle("Concert");
-        e.setLocation("Main Hall");
-        e.setStartTime(Instant.now().plusSeconds(3600));
-        e.setEndTime(Instant.now().plusSeconds(7200));
-        e.setStatus(status);
-        return e;
+    private static Event event(EventStatus status) {
+        return CatalogFixtures.event(1L, status);
     }
 }

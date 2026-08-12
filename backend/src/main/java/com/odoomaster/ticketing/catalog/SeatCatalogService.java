@@ -29,24 +29,20 @@ public class SeatCatalogService {
     public Venue ensureVenue(String name, String address) {
         String key = (name == null || name.isBlank()) ? "Unknown" : name.trim();
         return venues.findByName(key).orElseGet(() ->
-                venues.save(Venue.builder().name(key).address(address).build()));
+                venues.save(Venue.named(key, address)));
     }
 
     @Transactional
     public Section ensureSection(Long venueId, String name) {
         String key = (name == null || name.isBlank()) ? "Default" : name.trim();
         return sections.findByVenueIdAndName(venueId, key).orElseGet(() ->
-                sections.save(Section.builder().venueId(venueId).name(key).build()));
+                sections.save(Section.of(venueId, key)));
     }
 
     @Transactional
     public Seat ensureSeat(Long sectionId, String rowLabel, String seatNumber) {
         return seats.findBySectionIdAndRowLabelAndSeatNumber(sectionId, rowLabel, seatNumber).orElseGet(() ->
-                seats.save(Seat.builder()
-                        .sectionId(sectionId)
-                        .rowLabel(rowLabel)
-                        .seatNumber(seatNumber)
-                        .build()));
+                seats.save(Seat.of(sectionId, rowLabel, seatNumber)));
     }
 
     @Transactional

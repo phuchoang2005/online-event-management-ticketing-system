@@ -6,6 +6,7 @@ import com.odoomaster.ticketing.catalog.EventCatalog.EventSummary;
 import com.odoomaster.ticketing.catalog.SeatInventory;
 import com.odoomaster.ticketing.catalog.SeatInventory.SeatDetail;
 import com.odoomaster.ticketing.ticketing.internal.Ticket;
+import com.odoomaster.ticketing.ticketing.internal.TicketStatus;
 import com.odoomaster.ticketing.ticketing.TicketDtos.ScanRequest;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.ticketing.internal.CheckInRepository;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -35,6 +37,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.odoomaster.ticketing.ticketing.internal.TicketingFixtures;
 
 @ExtendWith(MockitoExtension.class)
 class CheckInServiceReliabilityTest {
@@ -67,12 +70,12 @@ class CheckInServiceReliabilityTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"USED", "CANCELLED", "REFUNDED", "PENDING"})
-    void scan_givenNonValidTicketStatus_rejectsUnsafeScan(String status) {
+    @EnumSource(value = TicketStatus.class, names = {"USED", "CANCELLED"})
+    void scan_givenNonValidTicketStatus_rejectsUnsafeScan(TicketStatus status) {
         CheckInService service = new CheckInService(tickets, checkIns, eventCatalog, seatInventory);
         Ticket ticket = ticket(status);
         when(tickets.findByQrCode("qr")).thenReturn(Optional.of(ticket));
-        if (!"USED".equals(status)) when(checkIns.existsByTicketId(1L)).thenReturn(false);
+        if (status != TicketStatus.USED) when(checkIns.existsByTicketId(1L)).thenReturn(false);
 
         assertThatThrownBy(() -> service.scan(9L, new ScanRequest("qr", "device-1")))
                 .isInstanceOf(AppException.class);
@@ -82,7 +85,7 @@ class CheckInServiceReliabilityTest {
     @Test
     void scan_givenExistingCheckIn_rejectsDuplicateQr() {
         CheckInService service = new CheckInService(tickets, checkIns, eventCatalog, seatInventory);
-        when(tickets.findByQrCode("qr")).thenReturn(Optional.of(ticket("VALID")));
+        when(tickets.findByQrCode("qr")).thenReturn(Optional.of(ticket(TicketStatus.VALID)));
         when(checkIns.existsByTicketId(1L)).thenReturn(true);
 
         assertThatThrownBy(() -> service.scan(9L, new ScanRequest("qr", "device-1")))
@@ -94,7 +97,7 @@ class CheckInServiceReliabilityTest {
     @Test
     void scan_givenUniqueConstraintRace_mapsToAlreadyUsed() {
         CheckInService service = new CheckInService(tickets, checkIns, eventCatalog, seatInventory);
-        when(tickets.findByQrCode("qr")).thenReturn(Optional.of(ticket("VALID")));
+        when(tickets.findByQrCode("qr")).thenReturn(Optional.of(ticket(TicketStatus.VALID)));
         when(checkIns.existsByTicketId(1L)).thenReturn(false);
         when(checkIns.save(any())).thenThrow(new DataIntegrityViolationException("duplicate"));
 
@@ -107,7 +110,7 @@ class CheckInServiceReliabilityTest {
     @Test
     void scan_givenValidTicket_marksUsedAndReturnsSeatContext() {
         CheckInService service = new CheckInService(tickets, checkIns, eventCatalog, seatInventory);
-        Ticket ticket = ticket("VALID");
+        Ticket ticket = ticket(TicketStatus.VALID);
         when(tickets.findByQrCode("qr")).thenReturn(Optional.of(ticket));
         when(checkIns.existsByTicketId(1L)).thenReturn(false);
         when(checkIns.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -119,10 +122,10 @@ class CheckInServiceReliabilityTest {
         assertThat(result.status()).isEqualTo("OK");
         assertThat(result.eventTitle()).isEqualTo("Gate reliability");
         assertThat(result.rowLabel()).isEqualTo("B");
-        assertThat(ticket.getStatus()).isEqualTo("USED");
+        assertThat(ticket.getStatus()).isEqualTo(TicketStatus.USED);
         ArgumentCaptor<Ticket> saved = ArgumentCaptor.forClass(Ticket.class);
         verify(tickets).save(saved.capture());
-        assertThat(saved.getValue().getStatus()).isEqualTo("USED");
+        assertThat(saved.getValue().getStatus()).isEqualTo(TicketStatus.USED);
     }
 
     @Test
@@ -130,7 +133,7 @@ class CheckInServiceReliabilityTest {
         CheckInService service = new CheckInService(tickets, checkIns, eventCatalog, seatInventory);
         AtomicBoolean firstSave = new AtomicBoolean(true);
         CountDownLatch bothAtSave = new CountDownLatch(2);
-        when(tickets.findByQrCode("qr")).thenReturn(Optional.of(ticket("VALID")));
+        when(tickets.findByQrCode("qr")).thenReturn(Optional.of(ticket(TicketStatus.VALID)));
         when(checkIns.existsByTicketId(1L)).thenReturn(false);
         when(checkIns.save(any())).thenAnswer(inv -> {
             bothAtSave.countDown();
@@ -161,17 +164,8 @@ class CheckInServiceReliabilityTest {
         assertThat(conflict).isEqualTo(1);
     }
 
-    private static Ticket ticket(String status) {
-        Ticket ticket = new Ticket();
-        ticket.setId(1L);
-        ticket.setUserId(4L);
-        ticket.setEventId(2L);
-        ticket.setEventSeatId(3L);
-        ticket.setOrderItemId(5L);
-        ticket.setQrCode("qr");
-        ticket.setStatus(status);
-        ticket.setIssuedAt(Instant.now());
-        return ticket;
+    private static Ticket ticket(TicketStatus status) {
+        return TicketingFixtures.ticket(1L, status);
     }
 
     private static EventSummary eventSummary() {

@@ -16,7 +16,8 @@ import java.util.List;
 /**
  * Translates exceptions into the uniform {@link ApiErrorEnvelope} response across all controllers.
  *
- * <p>Handles domain {@link AppException}s (using their code + status), bean-validation failures
+ * <p>Handles {@link AppException}s (using their pinned code + status), aggregate-thrown
+ * {@link DomainException}s (code resolved to a status via {@link ErrorCatalog}), bean-validation failures
  * (field details), authentication/access-denied errors, and any uncaught exception (logged and
  * returned as {@code INTERNAL_ERROR}). Each response carries the current {@code traceId} from the
  * MDC for correlation.
@@ -29,6 +30,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AppException.class)
     public ResponseEntity<ApiErrorEnvelope> handleApp(AppException ex) {
         return build(ex.getStatus(), ex.getCode(), ex.getMessage(), List.of());
+    }
+
+    /**
+     * Handles a {@link DomainException} thrown by an aggregate, which carries a code but no HTTP
+     * status. Spring dispatches to the most specific handler, so an {@link AppException} — a
+     * subclass — still lands on {@link #handleApp} above and keeps its pinned status; only the
+     * HTTP-free ones reach here and get their status from {@link ErrorCatalog}.
+     */
+    @ExceptionHandler(DomainException.class)
+    public ResponseEntity<ApiErrorEnvelope> handleDomain(DomainException ex) {
+        return build(ErrorCatalog.statusFor(ex.getCode()), ex.getCode(), ex.getMessage(), List.of());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

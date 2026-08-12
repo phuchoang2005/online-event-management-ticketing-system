@@ -6,8 +6,11 @@
  * declares the facets it actually uses rather than the whole kernel:
  *
  * <ul>
- *   <li>{@code shared::errors} — the API error contract: {@code AppException},
- *       {@code ApiErrorEnvelope} (and its nested {@code ErrorBody}/{@code FieldDetail}).</li>
+ *   <li>{@code shared::errors} — the API error contract: {@code DomainException} (thrown by
+ *       aggregates; carries a code, no HTTP status), {@code AppException} (its subclass, thrown by
+ *       services that pin a status), and {@code ApiErrorEnvelope} (with its nested
+ *       {@code ErrorBody}/{@code FieldDetail}). {@code ErrorCatalog}, which resolves a bare code to
+ *       a status, is an implementation detail and stays in the unnamed interface.</li>
  *   <li>{@code shared::security} — the authenticated caller: {@code AuthPrincipal},
  *       {@code CurrentUser}.</li>
  *   <li>{@code shared::audit} — the {@code @Auditable} marker consumed by {@code audit}'s aspect.</li>

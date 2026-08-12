@@ -50,13 +50,8 @@ public class AdminTicketTypeController {
             throw new AppException("TICKET_TYPE_EXISTS",
                     "A ticket type with this name already exists for this event.", HttpStatus.CONFLICT);
         }
-        TicketType tt = ticketTypes.save(TicketType.builder()
-                .eventId(eventId)
-                .name(req.name().trim())
-                .price(req.price())
-                .quantity(req.quantity())
-                .soldQuantity(0)
-                .build());
+        TicketType tt = ticketTypes.save(TicketType.create(eventId, req.name().trim(),
+                req.price(), req.quantity()));
         return view(tt);
     }
 

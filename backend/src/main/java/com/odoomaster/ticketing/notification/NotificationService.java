@@ -1,6 +1,8 @@
 package com.odoomaster.ticketing.notification;
 
 import com.odoomaster.ticketing.notification.internal.Notification;
+import com.odoomaster.ticketing.notification.internal.NotificationChannel;
+import com.odoomaster.ticketing.notification.internal.NotificationStatus;
 import com.odoomaster.ticketing.notification.NotificationDtos.*;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.notification.internal.NotificationRepository;
@@ -58,8 +60,8 @@ public class NotificationService {
         if (!Objects.equals(n.getUserId(), userId)) {
             throw new AppException("FORBIDDEN", "Notification does not belong to current user.", HttpStatus.FORBIDDEN);
         }
-        if (n.getReadAt() == null) {
-            n.setReadAt(Instant.now());
+        if (n.isUnread()) {
+            n.markReadAt(Instant.now());
             notifications.save(n);
         }
         return view(n);
@@ -83,21 +85,14 @@ public class NotificationService {
      */
     @Transactional
     public Notification create(Long userId, String type, String title, String content, String channel, String linkUrl) {
-        return notifications.save(Notification.builder()
-                .userId(userId)
-                .type(type)
-                .title(title)
-                .content(content)
-                .channel(channel != null ? channel : "IN_APP")
-                .status("SENT")
-                .linkUrl(linkUrl)
-                .sentAt(Instant.now())
-                .build());
+        return notifications.save(Notification.send(userId, type, title, content,
+                NotificationChannel.parse(channel).orElse(NotificationChannel.IN_APP),
+                linkUrl, Instant.now()));
     }
 
     private NotificationView view(Notification n) {
         return new NotificationView(
-                n.getId(), n.getType(), n.getTitle(), n.getContent(), n.getChannel(),
-                n.getStatus(), n.getLinkUrl(), n.getSentAt(), n.getReadAt(), n.getCreatedAt());
+                n.getId(), n.getType(), n.getTitle(), n.getContent(), n.getChannel().name(),
+                n.getStatus().name(), n.getLinkUrl(), n.getSentAt(), n.getReadAt(), n.getCreatedAt());
     }
 }

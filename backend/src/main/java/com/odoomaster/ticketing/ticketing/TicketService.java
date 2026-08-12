@@ -9,6 +9,7 @@ import com.odoomaster.ticketing.ticketing.TicketDtos.TicketPageMeta;
 import com.odoomaster.ticketing.ticketing.TicketDtos.TicketView;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.ticketing.internal.Ticket;
+import com.odoomaster.ticketing.ticketing.internal.TicketStatus;
 import com.odoomaster.ticketing.ticketing.internal.TicketRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.EnumSet;
 import java.util.Set;
 
 /**
@@ -46,7 +48,7 @@ public class TicketService {
         return tickets.findByUserIdOrderByIssuedAtDesc(userId).stream().map(this::view).toList();
     }
 
-    private static final Set<String> TICKET_STATUSES = Set.of("VALID", "USED", "CANCELLED");
+    private static final Set<TicketStatus> TICKET_STATUSES = EnumSet.allOf(TicketStatus.class);
 
     public TicketPage listMinePaged(Long userId, int page, int limit, String status) {
         int safePage = Math.max(1, page);
@@ -56,19 +58,17 @@ public class TicketService {
         if (status == null || status.isBlank() || "all".equalsIgnoreCase(status)) {
             result = tickets.findByUserIdOrderByIssuedAtDesc(userId, pr);
         } else {
-            String s = status.toUpperCase();
-            if (!TICKET_STATUSES.contains(s)) {
-                throw new AppException("VALIDATION_FAILED",
-                        "status must be one of " + TICKET_STATUSES + " or omitted.",
-                        HttpStatus.BAD_REQUEST);
-            }
+            TicketStatus s = TicketStatus.parse(status)
+                    .orElseThrow(() -> new AppException("VALIDATION_FAILED",
+                            "status must be one of " + TICKET_STATUSES + " or omitted.",
+                            HttpStatus.BAD_REQUEST));
             result = tickets.findByUserIdAndStatusOrderByIssuedAtDesc(userId, s, pr);
         }
         List<TicketView> data = result.getContent().stream().map(this::view).toList();
         Map<String, Long> counts = new LinkedHashMap<>();
         counts.put("all", tickets.countByUserId(userId));
-        for (String s : TICKET_STATUSES) {
-            counts.put(s, tickets.countByUserIdAndStatus(userId, s));
+        for (TicketStatus s : TICKET_STATUSES) {
+            counts.put(s.name(), tickets.countByUserIdAndStatus(userId, s));
         }
         return new TicketPage(data,
                 new TicketPageMeta(safePage, safeLimit, result.getTotalElements(), result.hasNext()),
@@ -85,15 +85,15 @@ public class TicketService {
     public void cancelMine(Long userId, Long ticketId) {
         Ticket t = tickets.findByIdAndUserId(ticketId, userId)
                 .orElseThrow(() -> new AppException("TICKET_NOT_FOUND", "Ticket not found.", HttpStatus.NOT_FOUND));
-        if ("USED".equals(t.getStatus())) {
+        if (t.getStatus() == TicketStatus.USED) {
             throw new AppException("TICKET_ALREADY_USED",
                     "Cannot delete a ticket that has already been checked in.",
                     HttpStatus.CONFLICT);
         }
-        if ("CANCELLED".equals(t.getStatus())) {
+        if (t.getStatus() == TicketStatus.CANCELLED) {
             return;
         }
-        t.setStatus("CANCELLED");
+        t.cancel();
         tickets.save(t);
         // Free the seat for resale: catalog transitions it SOLD -> AVAILABLE and evicts the caches.
         seatInventory.releaseSold(t.getEventId(), List.of(t.getEventSeatId()));
@@ -102,7 +102,7 @@ public class TicketService {
     private TicketView view(Ticket t) {
         EventSummary ev = eventCatalog.find(t.getEventId()).orElse(null);
         SeatDetail s = seatInventory.findSeats(List.of(t.getEventSeatId())).stream().findFirst().orElse(null);
-        return new TicketView(t.getId(), t.getQrCode(), t.getStatus(),
+        return new TicketView(t.getId(), t.getQrCode(), t.getStatus().name(),
                 t.getEventId(),
                 ev != null ? ev.title() : null,
                 ev != null ? ev.location() : null,

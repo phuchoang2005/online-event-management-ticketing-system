@@ -2,6 +2,8 @@ package com.odoomaster.ticketing.service;
 import com.odoomaster.ticketing.notification.NotificationService;
 
 import com.odoomaster.ticketing.notification.internal.Notification;
+import com.odoomaster.ticketing.notification.internal.NotificationChannel;
+import com.odoomaster.ticketing.notification.internal.NotificationStatus;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.notification.internal.NotificationRepository;
 import org.junit.jupiter.api.Test;
@@ -24,6 +26,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.odoomaster.ticketing.notification.internal.NotificationFixtures;
 
 @ExtendWith(MockitoExtension.class)
 class NotificationServiceReliabilityTest {
@@ -98,7 +101,7 @@ class NotificationServiceReliabilityTest {
     void markRead_givenAnotherUsersNotification_rejectsAccess() {
         NotificationService service = new NotificationService(notifications);
         Notification n = notification(1L, "TICKETS_ISSUED", null);
-        n.setUserId(99L);
+        n = NotificationFixtures.notification(1L, 99L, "TICKETS_ISSUED", NotificationChannel.IN_APP, null);
         when(notifications.findById(1L)).thenReturn(Optional.of(n));
 
         assertThatThrownBy(() -> service.markRead(5L, 1L))
@@ -139,8 +142,8 @@ class NotificationServiceReliabilityTest {
 
         assertThat(created.getUserId()).isEqualTo(5L);
         assertThat(created.getType()).isEqualTo(type);
-        assertThat(created.getStatus()).isEqualTo("SENT");
-        assertThat(created.getChannel()).isEqualTo(channel);
+        assertThat(created.getStatus()).isEqualTo(NotificationStatus.SENT);
+        assertThat(created.getChannel()).isEqualTo(NotificationChannel.valueOf(channel));
         assertThat(created.getSentAt()).isNotNull();
     }
 
@@ -153,22 +156,10 @@ class NotificationServiceReliabilityTest {
 
         ArgumentCaptor<Notification> saved = ArgumentCaptor.forClass(Notification.class);
         verify(notifications).save(saved.capture());
-        assertThat(saved.getValue().getChannel()).isEqualTo("IN_APP");
+        assertThat(saved.getValue().getChannel()).isEqualTo(NotificationChannel.IN_APP);
     }
 
     private static Notification notification(Long id, String type, Instant readAt) {
-        Notification n = new Notification();
-        n.setId(id);
-        n.setUserId(5L);
-        n.setType(type);
-        n.setTitle(type + " title");
-        n.setContent("content");
-        n.setChannel("IN_APP");
-        n.setStatus("SENT");
-        n.setLinkUrl("/tickets");
-        n.setSentAt(Instant.now());
-        n.setCreatedAt(Instant.now());
-        n.setReadAt(readAt);
-        return n;
+        return NotificationFixtures.notification(id, type, readAt);
     }
 }

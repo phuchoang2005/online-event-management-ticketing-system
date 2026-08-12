@@ -7,7 +7,7 @@ Every changes while coding prgoress need tracking and updating to document folde
 
 ## Overview
 
-Online event management & ticketing system ("Dề Dê"). A Spring Boot 3.2 / Java 21 monolithic backend (`backend/`) and a React + Vite + Tailwind frontend (`frontend/`), backed by MySQL 8 and Redis 7. Core domain: events, venues/seats, orders, payments (mock gateway with retry), QR tickets, gate check-in, feedback, notifications, and admin analytics. Design pressure throughout is high-concurrency ticket sales ("Golden Hour"): preventing double-booking, duplicate QR codes, and overload.
+Online event management & ticketing system ("Dề Dê"). A Spring Boot 3.2 / Java 21 monolithic backend (`backend/`) and a Next.js 14 (App Router) + React 18 + TypeScript + Tailwind frontend (`frontend/`), backed by MySQL 8 and Redis 7. Core domain: events, venues/seats, orders, payments (mock gateway with retry), QR tickets, gate check-in, feedback, notifications, and admin analytics. Design pressure throughout is high-concurrency ticket sales ("Golden Hour"): preventing double-booking, duplicate QR codes, and overload.
 
 ## Commands
 
@@ -60,7 +60,7 @@ The published API surface (the complete list — nothing else is reachable acros
 
 | Facet | Types |
 |---|---|
-| `shared::errors` | `AppException`, `ApiErrorEnvelope` (+ `ErrorBody`, `FieldDetail`) |
+| `shared::errors` | `DomainException`, `AppException`, `ApiErrorEnvelope` (+ `ErrorBody`, `FieldDetail`) |
 | `shared::security` | `AuthPrincipal`, `CurrentUser` |
 | `shared::audit` | `Auditable` |
 | `shared::contracts` | `TicketsIssuedEvent`, `EventDeletedEvent` |
@@ -75,7 +75,7 @@ The published API surface (the complete list — nothing else is reachable acros
 
 Two rules when touching this: **annotate nested types individually** (Modulith treats `EventCatalog.EventSummary` as its own class; unannotated it falls back into the module's unnamed interface and consumers break), and **write facet references without spaces** — `"catalog::events"`, never `"catalog :: events"` (Modulith 1.1.12 looks the interface up with the untrimmed segment, then reports the trimmed name, so the spaced form fails with a misleading "No named interface named 'events' found!").
 
-Boundaries are declared in each module's `package-info.java` via `@ApplicationModule(allowedDependencies = "module::facet", …)` and **enforced at build time** by `ModularityTests` (`verify()` — static analysis, no Spring context/DB, runs in plain `mvn test`), whose second test pins the facet table above so a dropped annotation fails at its cause. A boundary violation or dependency cycle fails the build. Within a module the classic lifecycle still holds: `controller → service (@Transactional) → …/internal repository (Spring Data JPA) → …/internal entity → MySQL`; DTOs (`*Dtos.java` record containers) cross the controller boundary, entities never leave the service layer. See `docs/adr/0011-spring-modulith.md`, `docs/adr/0012-named-interfaces.md`, `docs/architecture/modulith/`, and `SPRING_MODULITH_REFACTOR_PLAN.md`. **Any change that adds a cross-module reference must keep `verify()` green and, if the API surface changes, update the type's `@NamedInterface`, the consumer's `allowedDependencies`, `ModularityTests` and the facet tables in the docs.**
+Boundaries are declared in each module's `package-info.java` via `@ApplicationModule(allowedDependencies = "module::facet", …)` and **enforced at build time** by `ModularityTests` (`verify()` — static analysis, no Spring context/DB, runs in plain `mvn test`), whose second test pins the facet table above so a dropped annotation fails at its cause. A boundary violation or dependency cycle fails the build. Within a module the classic lifecycle still holds: `controller → service (@Transactional) → …/internal repository (Spring Data JPA) → …/internal entity → MySQL`; DTOs (`*Dtos.java` record containers) cross the controller boundary, entities never leave the service layer. See `docs/adr/0011-spring-modulith.md`, `docs/adr/0012-named-interfaces.md`, and `docs/architecture/modulith/`. (`SPRING_MODULITH_REFACTOR_PLAN.md` was retired and deleted in `db4c77d` once Sprints 0–5 completed; the current plan of record is `TACTICAL_DDD_REFACTOR_PLAN.md`, see ADR-0013.) **Any change that adds a cross-module reference must keep `verify()` green and, if the API surface changes, update the type's `@NamedInterface`, the consumer's `allowedDependencies`, `ModularityTests` and the facet tables in the docs.**
 
 ### Request lifecycle & cross-cutting concerns
 
@@ -100,13 +100,33 @@ Seat inventory lives in `event_seats` with a status + lock fields (`locked_by`, 
 
 ### Frontend structure
 
-React Router SPA. `services/apiClient.js` is the single axios instance: it injects the bearer token from `localStorage`, resolves the base URL from `window.__APP_CONFIG__.apiBaseUrl` (runtime) or `VITE_API_BASE_URL`, and unwraps the backend error envelope. `services/api.js` holds the typed call functions — UI/pages call those, never axios directly. Auth state lives in `store/AuthContext.jsx`; `components/RequireAuth.jsx` and `RequireRole.jsx` gate routes. Pages split into customer (`pages/`) and admin (`pages/admin/`).
+Next.js 14 App Router, TypeScript throughout. `services/apiClient.ts` is the single axios instance: it injects the bearer token from `localStorage`, resolves the base URL from `window.__APP_CONFIG__.apiBaseUrl` (runtime, injected by `public/config.js`) falling back to `NEXT_PUBLIC_API_BASE_URL` (build time), and unwraps the backend error envelope. The per-domain call functions live in `services/{auth,events,orders,tickets,feedback,notifications,admin,analytics,users}.ts` — UI/routes call those, never axios directly. Auth state lives in `store/AuthContext.tsx`. Routes are `app/` segments, split into customer (`app/events`, `app/checkout`, …) and admin (`app/admin/`).
+
+`frontend/types/index.ts` pins the backend's status vocabularies as TypeScript union types. **Those strings are a contract**: the backend persists and serializes exactly these values (see the Domain model section below), so renaming an enum constant on either side is a breaking change on both.
+
+### Domain model (tactical DDD)
+
+Inside each module the model is a **rich domain model**, not a set of data holders — see `docs/adr/0013-tactical-ddd-aggregates.md` and `TACTICAL_DDD_REFACTOR_PLAN.md`. Nine rules, all enforced by code review:
+
+1. **An enum belongs to the module that persists it** (`…/internal`, plus `sales/payment` for the gateway pair). 13 of them: `SeatStatus`, `EventStatus`, `OrderStatus`, `PaymentStatus`, `PaymentMethod`, `PaymentRetryStatus`, `TicketStatus`, `CheckInStatus`, `FeedbackStatus`, `FeedbackCategory`, `NotificationStatus`, `NotificationChannel`, `UserStatus`.
+2. **Boundaries speak `String`, never an enum.** Published facets, request DTOs and response DTOs all use `String`; the facet impl is the anti-corruption layer. Each enum exposes `parse(String) → Optional<T>` that tolerates case/whitespace and **never throws**; reporting facets answer `0` for a status they do not model. This is what lets `analytics` keep asking about `EXPIRED`/`REFUND_PENDING` — values nothing writes — without 500-ing the admin dashboard. A request DTO typed as an enum would turn a `400 VALIDATION_FAILED` into a Jackson-driven `500`.
+3. **Map enums `@Enumerated(EnumType.STRING)` and keep `@Column(length = …)`.** Persisted values must stay byte-identical; `EnumVocabularyTest` pins every constant's `name()` and length on each build.
+4. **Never compare a status to a literal in JPQL** — bind it as a parameter. `WHERE o.status = 'PAID'` is invisible to a suite that never boots Hibernate.
+5. **Entities expose no `set*`.** Construction goes through a static factory (`EventSeat.create`, `Order.place`, `Ticket.issue`, `Event.draft`, `User.register`, …); mutation goes through named behaviour that checks the invariant first (`lockFor`, `markSold`, `reprice`, `pay`, `cancel`, `markUsed`, `publish`, `revertToDraft`, …).
+6. **Aggregates never call `Instant.now()`** — callers pass an `Instant` from the `Clock` bean, which is what makes lock expiry testable without sleeping.
+7. **A value object must remove a representable-but-invalid state or give arithmetic a home**, otherwise it is churn. Four exist: `Money`, `SeatLock`, `LockPolicy`, `QrCode`. `SeatLabel` is specified in the plan but deferred; `Email` was considered and rejected on the record.
+8. **Only the aggregate mutates its own state.** Jobs, admin services and seeders route through aggregate methods. `SeatLockSweeperJob` and `AdminEventService` used to write `setStatus` directly; both now go through `EventSeat`.
+9. **Domain code throws `DomainException` (code + message, no HTTP); services that need a specific status throw `AppException`.** `shared/ErrorCatalog` resolves a bare code to a status, defaulting to **409 CONFLICT** — which is what every aggregate-level rule already returns, so a new invariant needs no registration.
+
+Test seam: aggregates have no setters and package-private all-args constructors, so tests build them via `*Fixtures` classes declared in the entity's own package under `src/test` (`CatalogFixtures`, `SalesFixtures`, `TicketingFixtures`, `FeedbackFixtures`, `NotificationFixtures`, `IamFixtures`). `ModularityTests` analyses `src/main` only, so those are invisible to boundary verification.
+
+**Caveat that `mvn test` cannot cover:** no test in this repo boots Hibernate, Spring or a database, so a wrong `@Enumerated`, a broken `@Query` or a `ddl-auto: validate` mismatch will pass a green build. Smoke-test the dev compose after any mapping change.
 
 ## Conventions
 
 - **API contract is the error envelope** — backend returns `{ error: { code, message, details, traceId } }` on failure; keep both sides in sync when adding error codes.
 - Config files containing real secrets (`application-dev.yml`, `application-prod.yml`, `.env`) are gitignored — only the `*-example` / `.env.example` templates are committed.
-- Frontend never hardcodes the API URL; always go through `VITE_API_BASE_URL` / the runtime config.
+- Frontend never hardcodes the API URL; always go through `NEXT_PUBLIC_API_BASE_URL` / the runtime `window.__APP_CONFIG__` config.
 - Backend uses Lombok (annotation processing configured in `pom.xml`).
 
 ### Replacing Commands

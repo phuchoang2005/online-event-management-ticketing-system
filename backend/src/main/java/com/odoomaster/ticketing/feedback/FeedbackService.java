@@ -7,6 +7,8 @@ import com.odoomaster.ticketing.iam.UserDirectory;
 import com.odoomaster.ticketing.iam.UserDirectory.UserRef;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.feedback.internal.Feedback;
+import com.odoomaster.ticketing.feedback.internal.FeedbackCategory;
+import com.odoomaster.ticketing.feedback.internal.FeedbackStatus;
 import com.odoomaster.ticketing.feedback.internal.FeedbackRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -16,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.EnumSet;
 import java.util.Set;
 
 /**
@@ -28,9 +31,8 @@ import java.util.Set;
 @Service
 public class FeedbackService {
 
-    private static final Set<String> VALID_CATEGORIES = Set.of(
-            "GENERAL", "EVENT", "PAYMENT", "BUG_REPORT", "SUGGESTION");
-    private static final Set<String> VALID_STATUSES = Set.of("NEW", "READ", "RESOLVED");
+    private static final Set<FeedbackCategory> VALID_CATEGORIES = EnumSet.allOf(FeedbackCategory.class);
+    private static final Set<FeedbackStatus> VALID_STATUSES = EnumSet.allOf(FeedbackStatus.class);
 
     private final FeedbackRepository feedbacks;
     private final UserDirectory users;
@@ -50,23 +52,17 @@ public class FeedbackService {
         if (req.body() == null || req.body().isBlank()) {
             throw new AppException("VALIDATION_FAILED", "Body is required.", HttpStatus.BAD_REQUEST);
         }
-        String cat = req.category() == null ? "GENERAL" : req.category().toUpperCase();
-        if (!VALID_CATEGORIES.contains(cat)) {
-            throw new AppException("VALIDATION_FAILED", "Invalid category.", HttpStatus.BAD_REQUEST);
-        }
+        FeedbackCategory cat = req.category() == null
+                ? FeedbackCategory.GENERAL
+                : FeedbackCategory.parse(req.category())
+                        .orElseThrow(() -> new AppException("VALIDATION_FAILED",
+                                "Invalid category.", HttpStatus.BAD_REQUEST));
         if (req.rating() != null && (req.rating() < 1 || req.rating() > 5)) {
             throw new AppException("VALIDATION_FAILED", "Rating must be 1–5.", HttpStatus.BAD_REQUEST);
         }
 
-        Feedback fb = Feedback.builder()
-                .userId(userId)
-                .eventId(req.eventId())
-                .category(cat)
-                .subject(req.subject().trim())
-                .body(req.body().trim())
-                .rating(req.rating())
-                .status("NEW")
-                .build();
+        Feedback fb = Feedback.submit(userId, req.eventId(), cat,
+                req.subject(), req.body(), req.rating(), Instant.now());
         feedbacks.save(fb);
 
         UserRef user = users.find(userId).orElse(null);
@@ -78,8 +74,8 @@ public class FeedbackService {
     public FeedbackPage list(int page, int limit, String status, String category) {
         int safePage = Math.max(1, page);
         int safeLimit = Math.min(100, Math.max(1, limit));
-        String nStatus = (status == null || status.isBlank()) ? null : status.toUpperCase();
-        String nCat = (category == null || category.isBlank()) ? null : category.toUpperCase();
+        FeedbackStatus nStatus = FeedbackStatus.parse(status).orElse(null);
+        FeedbackCategory nCat = FeedbackCategory.parse(category).orElse(null);
 
         Page<Feedback> result = feedbacks.findAllFiltered(nStatus, nCat,
                 PageRequest.of(safePage - 1, safeLimit));
@@ -90,9 +86,9 @@ public class FeedbackService {
     @Transactional(readOnly = true)
     public FeedbackSummary summary() {
         long total = feedbacks.count();
-        long newCount = feedbacks.countByStatus("NEW");
-        long readCount = feedbacks.countByStatus("READ");
-        long resolvedCount = feedbacks.countByStatus("RESOLVED");
+        long newCount = feedbacks.countByStatus(FeedbackStatus.NEW);
+        long readCount = feedbacks.countByStatus(FeedbackStatus.READ);
+        long resolvedCount = feedbacks.countByStatus(FeedbackStatus.RESOLVED);
         List<Feedback> all = feedbacks.findAll();
         Double avgRating = all.stream()
                 .filter(f -> f.getRating() != null)
@@ -106,13 +102,11 @@ public class FeedbackService {
     public FeedbackView updateStatus(Long feedbackId, UpdateStatusRequest req) {
         Feedback fb = feedbacks.findById(feedbackId)
                 .orElseThrow(() -> new AppException("FEEDBACK_NOT_FOUND", "Feedback not found.", HttpStatus.NOT_FOUND));
-        String newStatus = req.status() == null ? null : req.status().toUpperCase();
-        if (newStatus == null || !VALID_STATUSES.contains(newStatus)) {
-            throw new AppException("VALIDATION_FAILED", "Invalid status.", HttpStatus.BAD_REQUEST);
-        }
-        fb.setStatus(newStatus);
-        if ("RESOLVED".equals(newStatus)) fb.setResolvedAt(Instant.now());
-        if (req.adminNote() != null && !req.adminNote().isBlank()) fb.setAdminNote(req.adminNote().trim());
+        FeedbackStatus newStatus = FeedbackStatus.parse(req.status())
+                .orElseThrow(() -> new AppException("VALIDATION_FAILED",
+                        "Invalid status.", HttpStatus.BAD_REQUEST));
+        fb.moveTo(newStatus, Instant.now());
+        fb.attachAdminNote(req.adminNote());
         feedbacks.save(fb);
         return toView(fb);
     }
@@ -130,11 +124,11 @@ public class FeedbackService {
                 user != null ? user.email() : null,
                 fb.getEventId(),
                 event != null ? event.title() : null,
-                fb.getCategory(),
+                fb.getCategory().name(),
                 fb.getSubject(),
                 fb.getBody(),
                 fb.getRating(),
-                fb.getStatus(),
+                fb.getStatus().name(),
                 fb.getCreatedAt(),
                 fb.getResolvedAt(),
                 fb.getAdminNote());

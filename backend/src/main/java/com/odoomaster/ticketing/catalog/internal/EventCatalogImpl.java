@@ -32,7 +32,7 @@ public class EventCatalogImpl implements EventCatalog {
   public EventSummary requireOnSale(Long eventId) {
     Event event = events.findById(eventId)
         .orElseThrow(() -> new AppException("EVENT_NOT_FOUND", "Event not found.", HttpStatus.NOT_FOUND));
-    if (!"PUBLISHED".equals(event.getStatus())) {
+    if (event.getStatus() != EventStatus.PUBLISHED) {
       throw new AppException("EVENT_NOT_PUBLISHED",
           "Event is not currently on sale.", HttpStatus.CONFLICT);
     }
@@ -54,9 +54,17 @@ public class EventCatalogImpl implements EventCatalog {
     return events.count();
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Anti-corruption boundary: {@code status} arrives as a {@code String} from another module, so
+   * an unknown value answers {@code 0} rather than throwing. {@code analytics} asks about statuses
+   * catalog does not model, and a bare {@code valueOf} here would 500 the admin dashboard
+   * (ADR-0013 §1).
+   */
   @Override
   public long countEventsByStatus(String status) {
-    return events.countByStatus(status);
+    return EventStatus.parse(status).map(events::countByStatus).orElse(0L);
   }
 
   @Override
@@ -71,10 +79,10 @@ public class EventCatalogImpl implements EventCatalog {
 
   private static EventSummary toSummary(Event e) {
     return new EventSummary(e.getId(), e.getTitle(), e.getLocation(),
-        e.getStartTime(), e.getEndTime(), e.getStatus());
+        e.getStartTime(), e.getEndTime(), e.getStatus().name());
   }
 
   private static EventStats toStats(Event e) {
-    return new EventStats(e.getId(), e.getTitle(), e.getStatus(), e.getCategoryNames());
+    return new EventStats(e.getId(), e.getTitle(), e.getStatus().name(), e.getCategoryNames());
   }
 }

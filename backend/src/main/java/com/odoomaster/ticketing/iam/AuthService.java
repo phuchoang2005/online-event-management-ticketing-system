@@ -2,6 +2,7 @@ package com.odoomaster.ticketing.iam;
 
 import com.odoomaster.ticketing.iam.internal.Role;
 import com.odoomaster.ticketing.iam.internal.User;
+import com.odoomaster.ticketing.iam.internal.UserStatus;
 import com.odoomaster.ticketing.iam.AuthDtos.*;
 import com.odoomaster.ticketing.shared.AppException;
 import com.odoomaster.ticketing.iam.internal.RoleRepository;
@@ -14,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.time.Instant;
 
 /**
  * Authentication service: registers users (BCrypt-hashed credentials) and logs them in,
@@ -36,7 +38,7 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest req) {
-        String email = req.email().trim().toLowerCase();
+        String email = User.normaliseEmail(req.email());
         if (users.existsByEmail(email)) {
             throw new AppException("EMAIL_ALREADY_REGISTERED",
                     "Email đã được đăng ký.", HttpStatus.CONFLICT);
@@ -46,14 +48,8 @@ public class AuthService {
         Set<Role> roleSet = new HashSet<>();
         roleSet.add(userRole);
 
-        User u = User.builder()
-                .email(email)
-                .passwordHash(encoder.encode(req.password()))
-                .fullName(req.fullName())
-                .phone(req.phone())
-                .roles(roleSet)
-                .status("ACTIVE")
-                .build();
+        User u = User.register(email, encoder.encode(req.password()),
+                req.fullName(), req.phone(), roleSet, Instant.now());
         users.save(u);
         return issue(u);
     }
@@ -68,7 +64,7 @@ public class AuthService {
             throw new AppException("INVALID_CREDENTIALS",
                     "Email hoặc mật khẩu không đúng.", HttpStatus.UNAUTHORIZED);
         }
-        if (!"ACTIVE".equals(u.getStatus())) {
+        if (u.getStatus() != UserStatus.ACTIVE) {
             throw new AppException("ACCOUNT_INACTIVE", "Account is not active.", HttpStatus.FORBIDDEN);
         }
         return issue(u);

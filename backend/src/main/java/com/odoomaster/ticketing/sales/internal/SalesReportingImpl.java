@@ -1,6 +1,7 @@
 package com.odoomaster.ticketing.sales.internal;
 
 import com.odoomaster.ticketing.sales.SalesReporting;
+import com.odoomaster.ticketing.sales.payment.PaymentStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +18,11 @@ import java.util.List;
  * the raw {@code revenueByDay} tuples into the published {@link DailyRevenue}
  * projection so callers
  * never touch the entities.
+ *
+ * <p><strong>Status arguments are lenient by contract.</strong> They arrive as {@code String} from
+ * {@code analytics}, which asks about statuses this module does not model. An unrecognised value
+ * answers {@code 0} — the same answer the raw-string column gave — rather than throwing and taking
+ * the whole admin dashboard down with it (ADR-0013 §1).
  */
 @Service
 @Transactional(readOnly = true)
@@ -50,14 +56,26 @@ public class SalesReportingImpl implements SalesReporting {
         .toList();
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Anti-corruption boundary — see the class javadoc. {@code analytics} counts
+   * {@code "EXPIRED"} and {@code "REFUND_PENDING"}, neither of which {@link OrderStatus} models,
+   * so those answer {@code 0} exactly as they did when the column was a raw string.
+   */
   @Override
   public long countOrdersByStatus(String status) {
-    return orders.countByStatus(status);
+    return OrderStatus.parse(status).map(orders::countByStatus).orElse(0L);
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Anti-corruption boundary — unknown status answers {@code 0}, never throws.
+   */
   @Override
   public long countPaymentsByStatus(String status) {
-    return payments.countByStatus(status);
+    return PaymentStatus.parse(status).map(payments::countByStatus).orElse(0L);
   }
 
   private static LocalDate toLocalDate(Object value) {

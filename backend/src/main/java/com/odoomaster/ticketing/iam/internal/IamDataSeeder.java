@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.time.Instant;
 
 /**
  * Seeds the demo users (and their roles) for the {@code iam} module. Runs first
@@ -42,17 +43,11 @@ public class IamDataSeeder implements CommandLineRunner {
 
   private User ensureUser(String email, String password, String fullName, String phone, String role) {
     return users.findByEmail(email).orElseGet(() -> {
-      Role r = roles.findByName(role).orElseGet(() -> roles.save(Role.builder().name(role).build()));
+      Role r = roles.findByName(role).orElseGet(() -> roles.save(Role.named(role)));
       Set<Role> roleSet = new HashSet<>();
       roleSet.add(r);
-      User u = users.save(User.builder()
-          .email(email)
-          .passwordHash(encoder.encode(password))
-          .fullName(fullName)
-          .phone(phone)
-          .roles(roleSet)
-          .status("ACTIVE")
-          .build());
+      User u = users.save(User.register(email, encoder.encode(password), fullName, phone,
+          roleSet, Instant.now()));
       log.info("Seeded {} user {} / {}", role, email, password);
       return u;
     });

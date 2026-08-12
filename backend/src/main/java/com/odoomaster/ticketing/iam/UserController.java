@@ -38,8 +38,7 @@ public class UserController {
         Long uid = current.require().userId();
         User u = users.findById(uid).orElseThrow(() ->
                 new AppException("USER_NOT_FOUND", "User not found.", HttpStatus.NOT_FOUND));
-        if (req.fullName() != null) u.setFullName(req.fullName());
-        if (req.phone() != null) u.setPhone(req.phone());
+        u.updateProfile(req.fullName(), req.phone());
         users.save(u);
         return new UserResponse(u.getId(), u.getEmail(), u.getFullName(), u.getPhone(), u.getRoleNames());
     }

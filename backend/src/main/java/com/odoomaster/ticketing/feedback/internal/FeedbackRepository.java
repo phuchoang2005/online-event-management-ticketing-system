@@ -18,9 +18,9 @@ public interface FeedbackRepository extends JpaRepository<Feedback, Long> {
       ORDER BY f.createdAt DESC
       """)
   Page<Feedback> findAllFiltered(
-      @Param("status") String status,
-      @Param("category") String category,
+      @Param("status") FeedbackStatus status,
+      @Param("category") FeedbackCategory category,
       Pageable pageable);
 
-  long countByStatus(String status);
+  long countByStatus(FeedbackStatus status);
 }

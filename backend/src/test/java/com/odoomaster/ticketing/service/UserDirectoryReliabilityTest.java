@@ -14,6 +14,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
+import com.odoomaster.ticketing.iam.internal.IamFixtures;
 
 /**
  * Reliability tests for {@link UserDirectoryImpl} — the published iam identity API that lets
@@ -33,9 +34,7 @@ class UserDirectoryReliabilityTest {
 
     @Test
     void find_mapsEntityToUserRef() {
-        User u = new User();
-        u.setId(7L);
-        u.setEmail("buyer@dede.test");
+        User u = IamFixtures.user(7L, "buyer@dede.test");
         when(users.findById(7L)).thenReturn(Optional.of(u));
 
         assertThat(directory.find(7L)).get().satisfies(ref -> {
@@ -46,9 +45,7 @@ class UserDirectoryReliabilityTest {
 
     @Test
     void findByEmail_resolvesByAddress() {
-        User u = new User();
-        u.setId(3L);
-        u.setEmail("demo@dede.test");
+        User u = IamFixtures.user(3L, "demo@dede.test");
         when(users.findByEmail("demo@dede.test")).thenReturn(Optional.of(u));
 
         assertThat(directory.findByEmail("demo@dede.test")).get()

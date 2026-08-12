@@ -1,6 +1,7 @@
 package com.odoomaster.ticketing.service;
 
 import com.odoomaster.ticketing.ticketing.internal.Ticket;
+import com.odoomaster.ticketing.ticketing.internal.TicketStatus;
 import com.odoomaster.ticketing.ticketing.TicketIssuance;
 import com.odoomaster.ticketing.ticketing.TicketIssuance.TicketLine;
 import com.odoomaster.ticketing.ticketing.TicketIssuance.TicketOrder;
@@ -59,7 +60,7 @@ class TicketIssuanceReliabilityTest {
         assertThat(t.getUserId()).isEqualTo(5L);
         assertThat(t.getEventId()).isEqualTo(1L);
         assertThat(t.getEventSeatId()).isEqualTo(10L);
-        assertThat(t.getStatus()).isEqualTo("VALID");
+        assertThat(t.getStatus()).isEqualTo(TicketStatus.VALID);
         assertThat(t.getQrCode()).hasSize(32).matches("[0-9A-F]+");
     }
 
