@@ -93,7 +93,7 @@ public class TicketService {
         if (t.getStatus() == TicketStatus.CANCELLED) {
             return;
         }
-        t.setStatus(TicketStatus.CANCELLED);
+        t.cancel();
         tickets.save(t);
         // Free the seat for resale: catalog transitions it SOLD -> AVAILABLE and evicts the caches.
         seatInventory.releaseSold(t.getEventId(), List.of(t.getEventSeatId()));

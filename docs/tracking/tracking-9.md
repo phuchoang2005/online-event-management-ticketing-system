@@ -349,14 +349,94 @@ actually fail.
   rows in Sprint 3 have been corrected in place. Sprints 0–2 are unaffected — they had no nested test
   classes — so the 727 → 758 → 778 progression stands.
 
-## Sprint 5 — Remaining aggregates, `QrCode`, docs closeout
+## Sprint 5 — Remaining aggregates, `QrCode`, docs closeout ✅
 
-_Pending._
+Goal: finish the job across all nine modules, so **no entity anywhere** can be mutated arbitrarily.
 
-## Sprint 6 — `SeatLabel` embeddable (optional)
+| # | Change | Status |
+|---|---|---|
+| 1 | New `ticketing/internal/QrCode` — a generator value object with the `32 × [0-9A-F]` invariant. The column and `findByQrCode(String)` stay `String`, because gate scanners hand us arbitrary input | ✅ |
+| 2 | `Ticket`: `issue`, `isOwnedBy`, `isScannable(existingCheckIn)`, `markUsed`, `cancel`. `CheckIn.record(...)` | ✅ |
+| 3 | `Event`: `draft`, `isOnSale`, `isDeletable`, `publish(seatCount)`, `revertToDraft(hasSoldSeats)`, `cancel`, `complete`, `changeStatusTo(...)`, `describe`, `reschedule`, `categorise`. `AdminEventService.changeStatus` collapses into one `changeStatusTo` call | ✅ |
+| 4 | `TicketType`: `create`, `addCapacity`, `reprice`. `User`: `register`, `normaliseEmail`, `isActive`, `grant`, `updateProfile`, `changePassword`. `Feedback`: `submit`, `moveTo`, `attachAdminNote`. `Notification`: `send`, `isUnread`, `isOwnedBy`, `markReadAt`. `AuditLog.of` | ✅ |
+| 5 | Reference data (`Venue`, `Section`, `Seat`, `EventCategory`, `Role`) gets factories and no behaviour — the correct outcome for reference data, recorded as such rather than left looking unfinished | ✅ |
+| 6 | **All 14 entities now carry `@Getter` + `@NoArgsConstructor(PROTECTED)` + `@AllArgsConstructor(PACKAGE)`.** `@Setter` and `@Builder` appear nowhere in `src/main` | ✅ |
+| 7 | 12 services/controllers/seeders migrated onto the factories, including `AuthService` (which hands e-mail normalisation to `User`), `UserController`, `CheckInService`, `TicketService`, `AuditAspect`, both seeders | ✅ |
+| 8 | Four new fixture classes (`TicketingFixtures`, `FeedbackFixtures`, `NotificationFixtures`, `IamFixtures`); `CatalogFixtures` gains `event(...)` and `withId(...)` | ✅ |
+| 9 | New pure-unit `TicketAggregateTest` (34) and `EventAggregateTest` (15). `ReliabilityMatrixTest`'s ticket matrix now builds through a fixture rather than a bare constructor | ✅ |
+| 10 | **Docs closeout** — ADR-0013 → **Accepted** + index row; new **"Domain model (tactical DDD)"** section in `CLAUDE.md` stating all nine rules; `CLAUDE.md` frontend section corrected to Next.js 14 + App Router + TypeScript (finding #8), including the stale `VITE_API_BASE_URL` convention; this sheet | ✅ |
 
-_Pending._
+### Impact
 
-## Sprint 7 — Persistence slice test (optional)
+- **The refactor's central claim is now true everywhere**: `grep -rl "@Setter\|@Builder" src/main` returns
+  nothing. Every state change in the system goes through a method that checked an invariant first.
+- **Event publication rules moved out of the service.** `AdminEventService.changeStatus` was a chain
+  of `if` statements mixing parsing, seat queries and assignment; it is now a parse, two repository
+  reads, and `e.changeStatusTo(target, seatCount, hasSoldSeats)`. The seat facts are passed in
+  because seat inventory is a different aggregate — the aggregate does not get to query.
+- **E-mail normalisation has one owner.** `User.normaliseEmail` is used by both `register` and
+  `AuthService.register`'s existence check, so the two can no longer disagree about what a duplicate
+  address is. (Note this is *not* the rejected `Email` value object — it is one static method on the
+  aggregate that already owns the field, which costs nothing.)
+- **The QR generator is finally tested.** `QrCode.generate()` is now the single definition of the
+  shape; the 20 repeated + 500-sample uniqueness assertions exercise production code rather than a
+  copy of it.
+- **Tests.** 824 → 881 (+57: +34 `TicketAggregateTest`, +15 `EventAggregateTest`, +8 from nested
+  parameterised expansion).
 
-_Pending._
+### Verification
+
+| Check | Result |
+|---|---|
+| `cd backend && mvn clean test` (JDK 21) | ✅ BUILD SUCCESS — **881 tests**, 0 failures, 0 errors |
+| `ModularityTests.verify()` + `exposesTheDeclaredNamedInterfaces()` | ✅ green — the 10-facet table is byte-identical to the tracking-8 baseline apart from `shared::errors` gaining `DomainException` in Sprint 2 |
+| **`grep -rl "@Setter\|@Builder" src/main`** | ✅ **no matches** — no entity in any module is open to arbitrary mutation |
+| `grep` for `set*` calls on entities in `src/main` | ✅ none; remaining hits are Spring/JDK APIs (`SecurityContextHolder.setAuthentication`, `BigDecimal.setScale`, …) |
+| DB schema / wire format / API contract | unchanged — no migration across all six sprints |
+
+### Notes
+
+- **`CatalogDataSeeder` now publishes explicitly.** `Event.draft(...)` starts in `DRAFT` by
+  definition, so the demo seeder calls `publish(1)` immediately afterwards to keep the sample catalog
+  on sale as before. Making the factory take a status would have re-opened the very hole the
+  aggregate closes.
+- **Reference-data entities getting only a factory is the answer, not a shortfall.** `Venue`,
+  `Section`, `Seat`, `EventCategory` and `Role` have no lifecycle to model. Inventing transitions for
+  them would be the same mistake as inventing the `Email` value object.
+- **Two ADR-0013 figures were corrected while marking it Accepted.** It was drafted saying "15 enums"
+  (the vocabularies it enumerated map to 13 types) and listed `SeatLabel` among the value objects that
+  exist. `SeatLabel` is **deferred**: it was sequenced last precisely because nothing depends on it,
+  and the four VOs that did land — `Money`, `SeatLock`, `LockPolicy`, `QrCode` — each removed a
+  representable-but-invalid state, which `SeatLabel` would not have. Recording it as deferred rather
+  than quietly dropping it keeps the option open.
+- **`CLAUDE.md`'s frontend section was substantially wrong**, not just the framework name: it
+  described a React Router SPA with `.js` services and `pages/` routing. The actual app is Next.js 14
+  App Router with TypeScript services and `app/` segments. Corrected against the real tree, and the
+  `VITE_API_BASE_URL` convention line updated to `NEXT_PUBLIC_API_BASE_URL`.
+- **Sprints 6 and 7 remain open and optional.** Sprint 6 (`SeatLabel`) is droppable by design.
+  Sprint 7 — a `@DataJpaTest` persistence slice — is the one genuinely worth doing: baseline
+  finding 6 (no test boots Hibernate) is *still true*, so six sprints of mapping changes rest
+  entirely on the manual smoke gate.
+
+## Sprint 6 — `SeatLabel` embeddable (optional) — **not done, deferred**
+
+Cut deliberately. It was sequenced last because nothing downstream depends on it, and unlike the four
+value objects that did land it removes no representable-but-invalid state — `(section, rowLabel,
+seatNumber)` is a legitimate triple, just a verbose one. The cost (two repository method renames plus
+~10 call sites) buys tidiness, not correctness. The design stays recorded in
+[`../../TACTICAL_DDD_REFACTOR_PLAN.md`](../../TACTICAL_DDD_REFACTOR_PLAN.md) should that trade change.
+
+## Sprint 7 — Persistence slice test (optional) — **not done, recommended next**
+
+The highest-value work remaining, and the one open risk this iteration did not close. Baseline
+finding 6 still holds: **no test in this repository boots Hibernate, Spring or a database.** Six
+sprints of `@Enumerated` mappings, an `@Embedded` value object and seven rewritten `@Query` methods
+therefore rest entirely on the manual smoke gate. A `@DataJpaTest` with an embedded MySQL-mode
+database and three tests would close it:
+
+1. round-trip every enum-bearing entity and assert the persisted column string via native SQL;
+2. exercise all seven rewritten `@Query` methods, including `s.lock.lockedUntil`;
+3. boot Hibernate with `ddl-auto: validate` against the Flyway-migrated schema.
+
+It is listed separately because it is new test infrastructure rather than a refactor, and it should
+be judged on its own merits.

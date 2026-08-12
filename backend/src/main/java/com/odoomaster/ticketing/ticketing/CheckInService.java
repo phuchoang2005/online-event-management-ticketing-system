@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.time.Instant;
 
 /**
  * Gate check-in service: validates a ticket's QR code and records a single, idempotent
@@ -58,19 +59,14 @@ public class CheckInService {
             throw new AppException("TICKET_NOT_VALID", "Ticket not in VALID state.", HttpStatus.CONFLICT);
         }
 
-        CheckIn ci = CheckIn.builder()
-                .ticketId(t.getId())
-                .checkedInBy(scannerUserId)
-                .status(CheckInStatus.OK)
-                .deviceId(req.deviceId())
-                .build();
+        CheckIn ci = CheckIn.record(t.getId(), scannerUserId, req.deviceId(), Instant.now());
         try {
             checkIns.save(ci);
         } catch (DataIntegrityViolationException dup) {
             throw new AppException("ALREADY_USED", "Ticket already checked in.", HttpStatus.CONFLICT);
         }
 
-        t.setStatus(TicketStatus.USED);
+        t.markUsed();
         tickets.save(t);
 
         EventSummary ev = eventCatalog.find(t.getEventId()).orElse(null);

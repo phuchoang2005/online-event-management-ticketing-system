@@ -14,6 +14,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Method;
+import java.time.Instant;
 
 /**
  * AOP aspect that persists an audit row after any {@link Auditable}-annotated method succeeds.
@@ -52,14 +53,7 @@ public class AuditAspect {
             Long entityId = extractId(result);
             Long userId = currentUserId();
             String traceId = MDC.get("traceId");
-            AuditLog row = AuditLog.builder()
-                    .userId(userId)
-                    .action(a.action())
-                    .entity(a.entity())
-                    .entityId(entityId)
-                    .traceId(traceId)
-                    .build();
-            audits.save(row);
+            audits.save(AuditLog.of(userId, a.action(), a.entity(), entityId, null, traceId, Instant.now()));
         } catch (Exception e) {
             log.warn("audit aspect failed: {}", e.toString());
         }

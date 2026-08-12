@@ -19,6 +19,7 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import com.odoomaster.ticketing.ticketing.internal.TicketingFixtures;
 
 class ReliabilityMatrixTest {
 
@@ -109,8 +110,7 @@ class ReliabilityMatrixTest {
         return IntStream.range(0, 16).boxed().flatMap(round -> cases.stream().map(c -> DynamicTest.dynamicTest(
                 "ticket scannable round " + round + " " + c.status() + " existing=" + c.existingCheckIn(),
                 () -> {
-                    Ticket ticket = new Ticket();
-                    ticket.setStatus(c.status());
+                    Ticket ticket = TicketingFixtures.ticket(1L, c.status());
                     assertThat(isScannable(ticket, c.existingCheckIn())).isEqualTo(c.scannable());
                 })));
     }

@@ -24,6 +24,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
+import com.odoomaster.ticketing.catalog.internal.CatalogFixtures;
 
 /**
  * Reliability tests for {@link EventCatalogImpl} — the "event on sale" guard that moved out of
@@ -116,13 +117,6 @@ class EventCatalogReliabilityTest {
     }
 
     private static Event event(EventStatus status) {
-        Event e = new Event();
-        e.setId(1L);
-        e.setTitle("Concert");
-        e.setLocation("Main Hall");
-        e.setStartTime(Instant.now().plusSeconds(3600));
-        e.setEndTime(Instant.now().plusSeconds(7200));
-        e.setStatus(status);
-        return e;
+        return CatalogFixtures.event(1L, status);
     }
 }

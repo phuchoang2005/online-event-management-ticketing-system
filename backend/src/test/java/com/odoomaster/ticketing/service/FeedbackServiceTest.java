@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import com.odoomaster.ticketing.feedback.internal.FeedbackFixtures;
 
 @ExtendWith(MockitoExtension.class)
 class FeedbackServiceTest {
@@ -43,11 +44,7 @@ class FeedbackServiceTest {
     void submit_happyPath_savesFeedbackWithDefaults() {
         var req = new SubmitFeedbackRequest(null, "GENERAL", "Great app", "I love it", 5);
         when(userDirectory.find(1L)).thenReturn(Optional.of(new UserRef(1L, "user@test.com")));
-        when(feedbackRepo.save(any())).thenAnswer(inv -> {
-            Feedback f = inv.getArgument(0);
-            f.setId(42L);
-            return f;
-        });
+        when(feedbackRepo.save(any())).thenAnswer(inv -> FeedbackFixtures.withId(inv.getArgument(0), 42L));
 
         FeedbackView view = service.submit(1L, req);
 
@@ -191,8 +188,7 @@ class FeedbackServiceTest {
         when(feedbackRepo.countByStatus(FeedbackStatus.NEW)).thenReturn(3L);
         when(feedbackRepo.countByStatus(FeedbackStatus.READ)).thenReturn(5L);
         when(feedbackRepo.countByStatus(FeedbackStatus.RESOLVED)).thenReturn(2L);
-        Feedback rated = stubFeedback(1L, FeedbackStatus.RESOLVED);
-        rated.setRating(4);
+        Feedback rated = FeedbackFixtures.feedback(1L, FeedbackStatus.RESOLVED, FeedbackCategory.GENERAL, 4);
         when(feedbackRepo.findAll()).thenReturn(List.of(rated, stubFeedback(2L, FeedbackStatus.NEW)));
 
         FeedbackSummary s = service.summary();
@@ -218,14 +214,6 @@ class FeedbackServiceTest {
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private static Feedback stubFeedback(Long id, FeedbackStatus status) {
-        Feedback f = new Feedback();
-        f.setId(id);
-        f.setUserId(1L);
-        f.setCategory(FeedbackCategory.GENERAL);
-        f.setSubject("subject");
-        f.setBody("body");
-        f.setStatus(status);
-        f.setCreatedAt(Instant.now());
-        return f;
+        return FeedbackFixtures.feedback(id, status);
     }
 }

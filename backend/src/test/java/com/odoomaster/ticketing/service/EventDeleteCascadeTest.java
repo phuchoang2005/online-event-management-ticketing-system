@@ -28,6 +28,8 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.odoomaster.ticketing.ticketing.internal.TicketingFixtures;
+import com.odoomaster.ticketing.ticketing.internal.TicketStatus;
 
 /**
  * Covers the {@link EventDeletedEvent} cascade that replaced {@code AdminEventService}'s hand-written
@@ -107,9 +109,6 @@ class EventDeleteCascadeTest {
     }
 
     private static Ticket ticket(Long id) {
-        Ticket t = new Ticket();
-        t.setId(id);
-        t.setEventId(9L);
-        return t;
+        return TicketingFixtures.ticket(id, TicketStatus.VALID, 4L, 9L, 3L, "qr-" + id);
     }
 }

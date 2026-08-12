@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.time.Instant;
 
 /**
  * Authentication service: registers users (BCrypt-hashed credentials) and logs them in,
@@ -37,7 +38,7 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest req) {
-        String email = req.email().trim().toLowerCase();
+        String email = User.normaliseEmail(req.email());
         if (users.existsByEmail(email)) {
             throw new AppException("EMAIL_ALREADY_REGISTERED",
                     "Email đã được đăng ký.", HttpStatus.CONFLICT);
@@ -47,14 +48,8 @@ public class AuthService {
         Set<Role> roleSet = new HashSet<>();
         roleSet.add(userRole);
 
-        User u = User.builder()
-                .email(email)
-                .passwordHash(encoder.encode(req.password()))
-                .fullName(req.fullName())
-                .phone(req.phone())
-                .roles(roleSet)
-                .status(UserStatus.ACTIVE)
-                .build();
+        User u = User.register(email, encoder.encode(req.password()),
+                req.fullName(), req.phone(), roleSet, Instant.now());
         users.save(u);
         return issue(u);
     }

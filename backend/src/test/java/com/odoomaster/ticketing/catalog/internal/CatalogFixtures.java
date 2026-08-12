@@ -53,13 +53,24 @@ public final class CatalogFixtures {
 
     /** An event in {@code status}, with a persisted id. */
     public static Event event(Long id, EventStatus status) {
-        Event e = new Event();
-        e.setId(id);
-        e.setTitle("Concert");
-        e.setLocation("Main Hall");
-        e.setStartTime(Instant.now().plusSeconds(3600));
-        e.setEndTime(Instant.now().plusSeconds(7200));
-        e.setStatus(status);
+        Event e = new Event(id, "Concert", null, "Main Hall", new java.util.HashSet<>(), null, null,
+                Instant.now().plusSeconds(3600), Instant.now().plusSeconds(7200),
+                status, null, Instant.now());
         return e;
+    }
+
+    /**
+     * Stamp a generated id onto an aggregate, the way Hibernate does on {@code save()}.
+     * See {@code SalesFixtures.withId} for why this is reflection rather than a setter.
+     */
+    public static <T> T withId(T entity, Long id) {
+        try {
+            var field = entity.getClass().getDeclaredField("id");
+            field.setAccessible(true);
+            field.set(entity, id);
+            return entity;
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Could not assign id to " + entity.getClass().getSimpleName(), e);
+        }
     }
 }

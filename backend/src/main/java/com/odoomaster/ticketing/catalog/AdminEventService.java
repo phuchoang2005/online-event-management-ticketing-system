@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.*;
+import java.time.Instant;
 
 /**
  * Admin/organizer service for the event lifecycle: create, edit, status transitions, and
@@ -89,7 +90,7 @@ public class AdminEventService {
         String trimmed = name.trim();
         EventCategory existing = categories.findByName(trimmed).orElse(null);
         if (existing != null) return new CategoryView(existing.getId(), existing.getName());
-        EventCategory saved = categories.save(EventCategory.builder().name(trimmed).build());
+        EventCategory saved = categories.save(EventCategory.named(trimmed));
         return new CategoryView(saved.getId(), saved.getName());
     }
 
@@ -98,18 +99,9 @@ public class AdminEventService {
             @CacheEvict(value = CacheConfig.EVENTS_LIST, allEntries = true)
     })
     public AdminEventDetail create(AdminEventUpsertRequest req) {
-        validateTimes(req);
-        Event e = Event.builder()
-                .title(req.title().trim())
-                .description(req.description())
-                .location(req.location())
-                .organizer(req.organizer())
-                .imageUrl(req.imageUrl())
-                .startTime(req.startTime())
-                .endTime(req.endTime())
-                .status(EventStatus.DRAFT)
-                .build();
-        e.setCategories(resolveCategories(req.categories()));
+        Event e = Event.draft(req.title(), req.description(), req.location(), req.organizer(),
+                req.imageUrl(), req.startTime(), req.endTime(), Instant.now());
+        e.categorise(resolveCategories(req.categories()));
         events.save(e);
         return detail(e.getId());
     }
@@ -123,15 +115,9 @@ public class AdminEventService {
     public AdminEventDetail update(Long id, AdminEventUpsertRequest req) {
         Event e = events.findById(id)
                 .orElseThrow(() -> new AppException("EVENT_NOT_FOUND", "Event not found.", HttpStatus.NOT_FOUND));
-        validateTimes(req);
-        e.setTitle(req.title().trim());
-        e.setDescription(req.description());
-        e.setLocation(req.location());
-        e.setOrganizer(req.organizer());
-        e.setImageUrl(req.imageUrl());
-        e.setStartTime(req.startTime());
-        e.setEndTime(req.endTime());
-        e.setCategories(resolveCategories(req.categories()));
+        e.describe(req.title(), req.description(), req.location(), req.organizer(), req.imageUrl());
+        e.reschedule(req.startTime(), req.endTime());
+        e.categorise(resolveCategories(req.categories()));
         events.save(e);
         return detail(e.getId());
     }
@@ -143,7 +129,7 @@ public class AdminEventService {
             if (raw == null || raw.isBlank()) continue;
             String n = raw.trim();
             EventCategory c = categories.findByName(n).orElseGet(() ->
-                    categories.save(EventCategory.builder().name(n).build()));
+                    categories.save(EventCategory.named(n)));
             out.add(c);
         }
         return out;
@@ -161,15 +147,9 @@ public class AdminEventService {
                         "Status must be one of " + ALLOWED_STATUSES, HttpStatus.BAD_REQUEST));
         Event e = events.findById(id)
                 .orElseThrow(() -> new AppException("EVENT_NOT_FOUND", "Event not found.", HttpStatus.NOT_FOUND));
-        if (target == EventStatus.PUBLISHED && seats.countByEventId(id) == 0) {
-            throw new AppException("EVENT_HAS_NO_SEATS",
-                    "Cannot publish an event with no seats.", HttpStatus.CONFLICT);
-        }
-        if (target == EventStatus.DRAFT && seats.existsByEventIdAndStatus(id, SeatStatus.SOLD)) {
-            throw new AppException("EVENT_HAS_TICKETS",
-                    "Cannot revert to DRAFT: event already has issued tickets.", HttpStatus.CONFLICT);
-        }
-        e.setStatus(target);
+        // The aggregate owns the guards for each target: PUBLISHED needs seats, DRAFT needs no sales.
+        // Seat facts come from the seat inventory, which is a different aggregate, so they are passed in.
+        e.changeStatusTo(target, seats.countByEventId(id), seats.existsByEventIdAndStatus(id, SeatStatus.SOLD));
         events.save(e);
         return detail(e.getId());
     }
@@ -195,16 +175,10 @@ public class AdminEventService {
         int quantity = req.rows() * req.seatsPerRow();
         TicketType tt = ticketTypes.findByEventIdAndName(eventId, name).orElse(null);
         if (tt == null) {
-            tt = ticketTypes.save(TicketType.builder()
-                    .eventId(eventId)
-                    .name(name)
-                    .price(req.price())
-                    .quantity(quantity)
-                    .soldQuantity(0)
-                    .build());
+            tt = ticketTypes.save(TicketType.create(eventId, name, req.price(), quantity));
         } else {
-            tt.setPrice(req.price());
-            tt.setQuantity(tt.getQuantity() + quantity);
+            tt.reprice(req.price());
+            tt.addCapacity(quantity);
             ticketTypes.save(tt);
         }
         List<EventSeat> toSave = new ArrayList<>();

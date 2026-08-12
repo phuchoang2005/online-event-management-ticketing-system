@@ -61,15 +61,8 @@ public class FeedbackService {
             throw new AppException("VALIDATION_FAILED", "Rating must be 1–5.", HttpStatus.BAD_REQUEST);
         }
 
-        Feedback fb = Feedback.builder()
-                .userId(userId)
-                .eventId(req.eventId())
-                .category(cat)
-                .subject(req.subject().trim())
-                .body(req.body().trim())
-                .rating(req.rating())
-                .status(FeedbackStatus.NEW)
-                .build();
+        Feedback fb = Feedback.submit(userId, req.eventId(), cat,
+                req.subject(), req.body(), req.rating(), Instant.now());
         feedbacks.save(fb);
 
         UserRef user = users.find(userId).orElse(null);
@@ -112,9 +105,8 @@ public class FeedbackService {
         FeedbackStatus newStatus = FeedbackStatus.parse(req.status())
                 .orElseThrow(() -> new AppException("VALIDATION_FAILED",
                         "Invalid status.", HttpStatus.BAD_REQUEST));
-        fb.setStatus(newStatus);
-        if (newStatus == FeedbackStatus.RESOLVED) fb.setResolvedAt(Instant.now());
-        if (req.adminNote() != null && !req.adminNote().isBlank()) fb.setAdminNote(req.adminNote().trim());
+        fb.moveTo(newStatus, Instant.now());
+        fb.attachAdminNote(req.adminNote());
         feedbacks.save(fb);
         return toView(fb);
     }

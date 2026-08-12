@@ -37,6 +37,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import com.odoomaster.ticketing.ticketing.internal.TicketingFixtures;
 
 @ExtendWith(MockitoExtension.class)
 class CheckInServiceReliabilityTest {
@@ -164,16 +165,7 @@ class CheckInServiceReliabilityTest {
     }
 
     private static Ticket ticket(TicketStatus status) {
-        Ticket ticket = new Ticket();
-        ticket.setId(1L);
-        ticket.setUserId(4L);
-        ticket.setEventId(2L);
-        ticket.setEventSeatId(3L);
-        ticket.setOrderItemId(5L);
-        ticket.setQrCode("qr");
-        ticket.setStatus(status);
-        ticket.setIssuedAt(Instant.now());
-        return ticket;
+        return TicketingFixtures.ticket(1L, status);
     }
 
     private static EventSummary eventSummary() {

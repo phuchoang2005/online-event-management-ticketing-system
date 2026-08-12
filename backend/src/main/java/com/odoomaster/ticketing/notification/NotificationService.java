@@ -60,8 +60,8 @@ public class NotificationService {
         if (!Objects.equals(n.getUserId(), userId)) {
             throw new AppException("FORBIDDEN", "Notification does not belong to current user.", HttpStatus.FORBIDDEN);
         }
-        if (n.getReadAt() == null) {
-            n.setReadAt(Instant.now());
+        if (n.isUnread()) {
+            n.markReadAt(Instant.now());
             notifications.save(n);
         }
         return view(n);
@@ -85,16 +85,9 @@ public class NotificationService {
      */
     @Transactional
     public Notification create(Long userId, String type, String title, String content, String channel, String linkUrl) {
-        return notifications.save(Notification.builder()
-                .userId(userId)
-                .type(type)
-                .title(title)
-                .content(content)
-                .channel(NotificationChannel.parse(channel).orElse(NotificationChannel.IN_APP))
-                .status(NotificationStatus.SENT)
-                .linkUrl(linkUrl)
-                .sentAt(Instant.now())
-                .build());
+        return notifications.save(Notification.send(userId, type, title, content,
+                NotificationChannel.parse(channel).orElse(NotificationChannel.IN_APP),
+                linkUrl, Instant.now()));
     }
 
     private NotificationView view(Notification n) {

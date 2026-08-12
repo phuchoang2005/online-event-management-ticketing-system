@@ -324,21 +324,15 @@ public class CatalogDataSeeder implements CommandLineRunner {
       String desc, String location, String imageUrl,
       Instant start, SectionSpec... sections) {
     EventCategory cat = eventCategories.findByName(category)
-        .orElseGet(() -> eventCategories.save(EventCategory.builder().name(category).build()));
+        .orElseGet(() -> eventCategories.save(EventCategory.named(category)));
     Set<EventCategory> catSet = new HashSet<>();
     catSet.add(cat);
 
-    Event e = Event.builder()
-        .title(title)
-        .description(desc)
-        .organizer(organizer)
-        .location(location)
-        .imageUrl(imageUrl)
-        .startTime(start)
-        .endTime(start.plus(3, ChronoUnit.HOURS))
-        .status(EventStatus.PUBLISHED)
-        .build();
-    e.setCategories(catSet);
+    Event e = Event.draft(title, desc, location, organizer, imageUrl,
+        start, start.plus(3, ChronoUnit.HOURS), Instant.now());
+    e.categorise(catSet);
+    // The demo catalog ships on sale; seats are added immediately below.
+    e.publish(1);
     events.save(e);
     var venue = catalog.ensureVenue(location, null);
     List<EventSeat> toSave = new ArrayList<>();
@@ -346,13 +340,7 @@ public class CatalogDataSeeder implements CommandLineRunner {
       var sectionRow = catalog.ensureSection(venue.getId(), sec.name);
       int qty = sec.rows * sec.seatsPerRow;
       TicketType tt = ticketTypes.findByEventIdAndName(e.getId(), sec.name)
-          .orElseGet(() -> ticketTypes.save(TicketType.builder()
-              .eventId(e.getId())
-              .name(sec.name)
-              .price(sec.price)
-              .quantity(qty)
-              .soldQuantity(0)
-              .build()));
+          .orElseGet(() -> ticketTypes.save(TicketType.create(e.getId(), sec.name, sec.price, qty)));
       for (int r = 0; r < sec.rows; r++) {
         char rowLabel = (char) ('A' + r);
         for (int n = 1; n <= sec.seatsPerRow; n++) {

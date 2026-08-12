@@ -1,6 +1,6 @@
 # ADR-0013: Tactical DDD — typed vocabularies, value objects, and rich aggregates inside modules
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-11
 - **Deciders:** Backend team
 - **Supersedes:** none — orthogonal to [ADR-0011](0011-spring-modulith.md) and [ADR-0012](0012-named-interfaces.md), which govern *where the module boundaries are*. This ADR governs *what lives inside them*.
@@ -52,7 +52,7 @@ warrants, and the last one is incompatible with the schema-neutrality constraint
 
 ### 1. Enums are module-internal; boundaries speak `String`
 
-15 enums are introduced, each declared in the module that persists it (`module/internal/`, except the
+13 enums are introduced, each declared in the module that persists it (`module/internal/`, except the
 payment pair in `sales/payment/`) and mapped with `@Enumerated(EnumType.STRING)` onto the existing
 VARCHAR column, with the `length` attribute preserved.
 
@@ -85,7 +85,7 @@ Two reasons this is not negotiable:
 Free-form data stays `String` and does not become an enum: `Role.name`, `Notification.type`,
 `EventCategory.name`, `Venue.name`, `Section.name`, `TicketType.name`.
 
-### 2. Five value objects, and a documented rejection
+### 2. Four value objects, one deferred, and a documented rejection
 
 | VO | Persisted | Note |
 |---|---|---|
@@ -93,7 +93,7 @@ Free-form data stays `String` and does not become an enum: `Role.name`, `Notific
 | `SeatLock(lockedBy, lockedUntil)` | **Yes**, `@Embeddable` | Makes `lockedUntil`-without-`lockedBy` unrepresentable. |
 | `LockPolicy(Duration ttl)` | No | Gives the 10-minute TTL a name and one owner. |
 | `QrCode(String)` | **No** | Generator only. The column and `findByQrCode(String)` stay `String`: `CheckInService` receives arbitrary scanner input, and a strict parse on the query path would turn a bad scan from `404` into a 500. |
-| `SeatLabel(section, rowLabel, seatNumber)` | **Yes**, `@Embeddable` | Retires the hand-carried triple. Landed last and independently droppable. |
+| `SeatLabel(section, rowLabel, seatNumber)` | **Yes**, `@Embeddable` | Retires the hand-carried triple. **Deferred** — sequenced last precisely because nothing depends on it, and cut when the four above proved sufficient. |
 
 **`Email` is rejected, on the record.** It would touch `UserRepository`, `UserDirectoryImpl`,
 `JwtService` and `AuthPrincipal` — the last of which is in the **published** `shared::security`
@@ -101,8 +101,8 @@ facet — to encapsulate one `trim().toLowerCase()` that Bean Validation already
 A value object that only moves a call is churn. This is the discipline example: *a VO must remove a
 representable-but-invalid state or give arithmetic a home, or it does not get created.*
 
-`@Embeddable` records are unsupported by JPA, so `SeatLabel` and `SeatLock` are classes with a private
-no-arg constructor, a private all-args constructor, and a public static factory. Hibernate reads an
+`@Embeddable` records are unsupported by JPA, so `SeatLock` (and `SeatLabel`, if it lands) is a class
+with a private no-arg constructor, a private all-args constructor, and a public static factory. Hibernate reads an
 all-null embeddable back as `null`, so the embedded field is never exposed — the owning aggregate
 exposes accessors that null-check internally.
 

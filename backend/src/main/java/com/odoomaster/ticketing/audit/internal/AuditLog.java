@@ -1,6 +1,11 @@
 package com.odoomaster.ticketing.audit.internal;
 
 import jakarta.persistence.*;
+import java.util.Objects;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.*;
 
 import java.time.Instant;
@@ -15,7 +20,9 @@ import java.time.Instant;
             @Index(name = "idx_audit_entity",  columnList = "entity, entity_id"),
             @Index(name = "idx_audit_created", columnList = "created_at")
         })
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor(access = AccessLevel.PACKAGE)
 public class AuditLog {
 
     @Id
@@ -42,6 +49,20 @@ public class AuditLog {
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    /** Record one audited action. Append-only: there are no transitions and nothing to mutate. */
+    public static AuditLog of(Long userId, String action, String entity, Long entityId,
+                              String metadata, String traceId, Instant now) {
+        AuditLog log = new AuditLog();
+        log.userId = userId;
+        log.action = Objects.requireNonNull(action, "action");
+        log.entity = Objects.requireNonNull(entity, "entity");
+        log.entityId = entityId;
+        log.metadata = metadata;
+        log.traceId = traceId;
+        log.createdAt = Objects.requireNonNull(now, "now");
+        return log;
+    }
 
     @PrePersist
     void prePersist() {

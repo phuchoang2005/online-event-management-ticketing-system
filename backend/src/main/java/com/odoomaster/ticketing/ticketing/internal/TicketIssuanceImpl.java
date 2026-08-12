@@ -6,6 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
 import java.util.UUID;
+import java.time.Instant;
 
 /**
  * Ticketing-owned implementation of {@link TicketIssuance}. Builds and persists
@@ -28,15 +29,8 @@ public class TicketIssuanceImpl implements TicketIssuance {
   public int issueForOrder(TicketOrder order) {
     int issued = 0;
     for (TicketLine line : order.lines()) {
-      Ticket ticket = Ticket.builder()
-          .orderItemId(line.orderItemId())
-          .userId(order.userId())
-          .eventId(order.eventId())
-          .eventSeatId(line.eventSeatId())
-          .qrCode(UUID.randomUUID().toString().replace("-", "").toUpperCase(Locale.ROOT))
-          .status(TicketStatus.VALID)
-          .build();
-      tickets.save(ticket);
+      tickets.save(Ticket.issue(line.orderItemId(), order.userId(), order.eventId(),
+          line.eventSeatId(), QrCode.generate(), Instant.now()));
       issued++;
     }
     return issued;

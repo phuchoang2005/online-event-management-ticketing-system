@@ -38,4 +38,4 @@ Short, dated records of architectural decisions for the Dề Dê ticketing platf
 | [0010](0010-single-instance-sweeper.md) | Single-instance seat-lock sweeper via DB advisory lock | Accepted |
 | [0011](0011-spring-modulith.md) | Spring Modulith modules with enforced boundaries | Accepted (API surface superseded by 0012) |
 | [0012](0012-named-interfaces.md) | Named interfaces as the published module API surface | Accepted |
-| [0013](0013-tactical-ddd-aggregates.md) | Tactical DDD — typed vocabularies, value objects, rich aggregates | Proposed |
+| [0013](0013-tactical-ddd-aggregates.md) | Tactical DDD — typed vocabularies, value objects, rich aggregates | Accepted |
